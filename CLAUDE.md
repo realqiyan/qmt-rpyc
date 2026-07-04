@@ -70,7 +70,7 @@ server/          Windows-only — hosts xtquant, ConnectionManager, EventBus, do
 1. Enables `faulthandler` for native crash diagnostics (dumps to `logs/crash.log`)
 2. Loads config from `.env` via `python-dotenv`
 3. Applies `server/datetime_patch.py` (monkey-patches `datetime.fromtimestamp` on Python < 3.12 to prevent a CPython C assertion crash `u < 1000000` triggered by xtquant's float-precision timestamps; on Python ≥ 3.12 the bug is fixed upstream so it no-ops)
-4. Sets up logging via `server/logging_config.py` (daily rotation, 30-day retention, console at WARNING+)
+4. Sets up logging via `server/logging_config.py` (daily rotation, 7-day retention, console at WARNING+)
 5. Creates `ConnectionManager` and `DownloadTaskManager` singletons (the third singleton, `EventBus`, is a module-level instance in `server/event_bus.py` imported by both service and connection modules)
 6. Builds the API surface (`server/api_surface.py`) — introspects xtdata functions, XtQuantTrader methods, xtconstant constants, and xttype classes
 7. Sets the manager instances plus auth config and API surface as class-level attributes on `XtquantService` (so each per-connection service instance shares the same singletons)

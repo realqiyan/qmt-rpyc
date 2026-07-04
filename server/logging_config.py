@@ -10,7 +10,7 @@ def setup_logging(log_dir="logs"):
 
     file_handler = TimedRotatingFileHandler(
         os.path.join(log_dir, "rpyc_server.log"),
-        when="midnight", backupCount=30, encoding="utf-8")
+        when="midnight", backupCount=7, encoding="utf-8")
     file_handler.setFormatter(fmt)
 
     console = logging.StreamHandler()
