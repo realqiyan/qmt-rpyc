@@ -18,7 +18,7 @@ REM Dev setup (adds pytest + client in editable mode)
 scripts\setup_dev.bat
 
 REM Start the server
-start_server.bat
+start-rpyc.bat
 REM or: python -m server.main
 ```
 
@@ -42,6 +42,18 @@ python -m pytest tests/test_service.py::test_health -v
 pip install -e .
 ```
 
+### Helper scripts
+
+| Script | Purpose |
+|---|---|
+| `scripts/setup.bat` | Full server setup (venv + deps + xtquant wiring + .env) |
+| `scripts/setup_dev.bat` | Dev setup (setup.bat + pytest + client editable install) |
+| `scripts/setup.sh` | Client setup (Linux/macOS/WSL) |
+| `scripts/install_xtquant.py` | Wires xtquant from QMT install into venv via `.pth` file |
+| `env_check.py` | Self-check: Python version, deps, MiniQMT process detection, xtquant import, .env validation. Auto-detects running MiniQMT, wires xtquant, and patches .env with detected values. |
+| `init_env.bat` | Standalone venv init (create venv → install deps → run env_check). Lighter than setup.bat; skips xtquant wiring and .env creation. |
+| `start-rpyc.bat` | Start server (validates .venv + .env, creates logs dir, runs `python -m server.main`) |
+
 ## Architecture
 
 ### Three-layer design
@@ -55,24 +67,29 @@ server/          Windows-only — hosts xtquant, ConnectionManager, EventBus, do
 ### Server component lifecycle
 
 `server/main.py` is the entry point. On startup it:
-1. Loads config from `.env` via `python-dotenv`
-2. Applies `server/datetime_patch.py` (fixes `datetime.fromtimestamp` float precision on Python < 3.12, needed for xtquant)
-3. Creates three singletons: `ConnectionManager` (trader lifecycle), `DownloadTaskManager` (async downloads), `EventBus` (pub/sub for trader callbacks)
-4. Builds the API surface (`server/api_surface.py`) — introspects xtquant modules to list available functions/signatures/constants
-5. Sets all singletons as class-level attributes on `XtquantService`
-6. Starts an RPyC `ThreadedServer`
+1. Enables `faulthandler` for native crash diagnostics (dumps to `logs/crash.log`)
+2. Loads config from `.env` via `python-dotenv`
+3. Applies `server/datetime_patch.py` (monkey-patches `datetime.fromtimestamp` on Python < 3.12 to prevent a CPython C assertion crash `u < 1000000` triggered by xtquant's float-precision timestamps; on Python ≥ 3.12 the bug is fixed upstream so it no-ops)
+4. Sets up logging via `server/logging_config.py` (daily rotation, 30-day retention, console at WARNING+)
+5. Creates `ConnectionManager` and `DownloadTaskManager` singletons (the third singleton, `EventBus`, is a module-level instance in `server/event_bus.py` imported by both service and connection modules)
+6. Builds the API surface (`server/api_surface.py`) — introspects xtdata functions, XtQuantTrader methods, xtconstant constants, and xttype classes
+7. Sets the manager instances plus auth config and API surface as class-level attributes on `XtquantService` (so each per-connection service instance shares the same singletons)
+8. Daemonizes leftover non-daemon threads from xtquant to prevent them from blocking server exit
+9. Starts an RPyC `ThreadedServer` (optionally TLS-wrapped via `ssl.wrap_socket`)
 
 ### RPyC service (`server/service.py`)
 
 `XtquantService` is the RPyC service class. Each client connection gets its own service instance. Exposed methods:
 
-- `authenticate` — HMAC challenge-response (see `common/protocol.py`)
+- `authenticate` — HMAC challenge-response (see `common/protocol.py`); rate-limited per IP (5 failures/60s → 300s lockout)
 - `get_api_surface` — returns the introspected xtquant API for client-side proxy building
-- `call_xtdata(name, args, kwargs)` — dispatch to `xtdata.*` functions; routes `download_*` to `DownloadTaskManager`
-- `call_trader(name, args, kwargs)` — dispatch to `XtQuantTrader` methods via `ConnectionManager`
+- `call_xtdata(name, args, kwargs)` — dispatch to `xtdata.*` functions; routes `download_*` to `DownloadTaskManager`; materializes RPyC netref proxies to plain Python objects before calling xtquant (pybind11 rejects netref types)
+- `call_trader(name, args, kwargs)` — dispatch to `XtQuantTrader` methods via `ConnectionManager`; auto-wraps string account_id → `StockAccount`
 - `subscribe_event` / `unsubscribe_event` / `poll_events` — EventBus pub/sub
 - `query_download` — poll async download task status
 - `health` — connection health check
+
+Every RPC method logs the request (peer, method, summarized args) and the result (status + summarized data) via the `_summarize_*` helpers. Heartbeat polls (`health`) are logged at DEBUG; everything else at INFO.
 
 ### ConnectionManager (`server/connection.py`)
 
@@ -102,7 +119,7 @@ Defined in `common/protocol.py` `EVENT_TYPES`: `order`, `trade`, `disconnect`, `
 
 - **Python 3.10 or 3.11** on the server — xtquant ships `.pyd` extensions for cp36–cp311 only (no cp312+)
 - Client has no such restriction — only needs `rpyc>=6.0.0`
-- Server requires `numpy>=1.24,<2` and `pandas>=2.0,<3` pinned for xtquant compatibility
+- Server requires `numpy>=1.24,<2`, `pandas>=2.0,<3`, and `psutil>=5.0.0` (for MiniQMT process detection in `env_check.py`) pinned for xtquant compatibility
 - Tests use `tests/_xtquant_mock.py` — a pure-Python in-memory mock, no Windows or `.pyd` needed
 - `conftest.py` adds project root to `sys.path` for direct imports
 
