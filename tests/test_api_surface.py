@@ -1,0 +1,59 @@
+import sys
+import os
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def setup_mock():
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    if tests_dir not in sys.path:
+        sys.path.insert(0, tests_dir)
+    from tests import _xtquant_mock
+    _xtquant_mock.xttype = _xtquant_mock
+    sys.modules["xtquant"] = _xtquant_mock
+    sys.modules["xtquant.xtdata"] = _xtquant_mock.xtdata
+    sys.modules["xtquant.xttrader"] = _xtquant_mock
+    sys.modules["xtquant.xttype"] = _xtquant_mock
+    sys.modules["xtquant.xtconstant"] = _xtquant_mock.xtconstant
+    yield
+    for mod in list(sys.modules.keys()):
+        if mod.startswith("xtquant") or mod == "server.api_surface":
+            del sys.modules[mod]
+
+
+class TestBuildApiSurface:
+    def test_returns_dict_with_surfaces(self):
+        from server.api_surface import build_api_surface
+        surface = build_api_surface()
+        assert "xtdata" in surface
+        assert "XtQuantTrader" in surface
+        assert "xtconstant" in surface
+        assert "xttype" in surface
+
+    def test_xtdata_has_functions(self):
+        from server.api_surface import build_api_surface
+        surface = build_api_surface()
+        funcs = surface["xtdata"]["functions"]
+        assert "get_market_data" in funcs
+        assert "signature" in funcs["get_market_data"]
+        assert "doc" in funcs["get_market_data"]
+
+    def test_trader_has_methods(self):
+        from server.api_surface import build_api_surface
+        surface = build_api_surface()
+        methods = surface["XtQuantTrader"]["methods"]
+        assert "order_stock" in methods
+        assert "connect" in methods
+        assert "query_stock_asset" in methods
+
+    def test_xtconstant_has_values(self):
+        from server.api_surface import build_api_surface
+        surface = build_api_surface()
+        constants = surface["xtconstant"]["constants"]
+        assert constants["STOCK_BUY"] == 23
+        assert constants["STOCK_SELL"] == 24
+
+    def test_xttype_has_classes(self):
+        from server.api_surface import build_api_surface
+        surface = build_api_surface()
+        assert "StockAccount" in surface["xttype"]["classes"]

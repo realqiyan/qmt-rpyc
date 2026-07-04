@@ -1,0 +1,283 @@
+import logging
+import threading
+
+import rpyc
+
+from common.protocol import verify_auth_token, STATUS_OK, STATUS_ERROR
+from server.auth_limiter import rate_limiter
+from server.event_bus import event_bus
+from server.download_manager import is_download_function
+from server.serializer import serialize
+
+logger = logging.getLogger(__name__)
+
+# ── argument / return-value summarizers for logging ──────────────────
+
+def _summarize_value(v, max_str_len=80, max_items=3):
+    """Compact one-line summary of a value, safe for log output."""
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, str):
+        s = repr(v)
+        if len(s) > max_str_len:
+            s = s[:max_str_len] + "...'"
+        return s
+    if isinstance(v, (list, tuple)):
+        n = len(v)
+        if n == 0:
+            return "[]" if isinstance(v, list) else "()"
+        items = [_summarize_value(x, 30, 1) for x in v[:max_items]]
+        suffix = f", +{n - max_items}" if n > max_items else ""
+        inner = ", ".join(items) + suffix
+        lo, hi = ("[", "]") if isinstance(v, list) else ("(", ")")
+        return f"{lo}{inner}{hi}"
+    if isinstance(v, dict):
+        n = len(v)
+        if n == 0:
+            return "{}"
+        keys = list(v.keys())[:max_items]
+        inner = ", ".join(
+            f"{_summarize_value(k, 20, 1)}: {_summarize_value(v[k], 30, 1)}"
+            for k in keys)
+        suffix = f", +{n - max_items}" if n > max_items else ""
+        return f"{{{inner}{suffix}}}"
+    if hasattr(v, "__dict__"):
+        return f"<{type(v).__name__}>"
+    return f"<{type(v).__name__}>"
+
+
+def _summarize_args(args, kwargs, max_str_len=80, max_items=3):
+    """Compact one-line summary of call arguments for logging."""
+    parts = []
+    for a in args:
+        parts.append(_summarize_value(a, max_str_len, max_items))
+    for k in sorted(kwargs.keys()):
+        parts.append(f"{k}={_summarize_value(kwargs[k], max_str_len, max_items)}")
+    return ", ".join(parts) if parts else "(none)"
+
+
+def _summarize_rpc_result(result, max_str_len=120):
+    """Compact one-line summary of an RPC result dict for logging."""
+    if not isinstance(result, dict):
+        return _summarize_value(result)
+    status = result.get("status")
+    if status == STATUS_ERROR:
+        err_type = result.get("error_type", "?")
+        err_msg = result.get("error_message", "")
+        if len(err_msg) > max_str_len:
+            err_msg = err_msg[:max_str_len] + "..."
+        return f"ERR {err_type}: {err_msg}"
+    data = result.get("data")
+    return f"OK {_summarize_value(data)}"
+
+# RPyC passes container types as netref proxies.  pybind11 (xtquant's C++
+# layer) only accepts plain builtins.list / builtins.dict — netref proxies
+# trip its strict type checking.  Materialize recursively before calling
+# into xtquant.
+_MATERIALIZE_MAX_DEPTH = 64
+
+
+def _materialize(obj, _depth=0):
+    if _depth > _MATERIALIZE_MAX_DEPTH:
+        return obj
+    module = getattr(type(obj), "__module__", "")
+    if module == "rpyc.core.netref":
+        if isinstance(obj, list):
+            return [_materialize(x, _depth + 1) for x in obj]
+        if isinstance(obj, dict):
+            return {k: _materialize(v, _depth + 1) for k, v in obj.items()}
+        if isinstance(obj, tuple):
+            return tuple(_materialize(x, _depth + 1) for x in obj)
+    return obj
+
+try:
+    from xtquant import xtdata
+except ImportError:
+    xtdata = None
+
+
+class QmtAuthError(Exception):
+    pass
+
+
+class XtquantService(rpyc.Service):
+    _auth_key = None
+    _require_auth = True
+    _connection_mgr = None
+    _download_mgr = None
+    _api_surface = None
+
+    @classmethod
+    def get_service_name(cls):
+        return "xtquant"
+
+    def __init__(self):
+        self._authenticated = False
+        self._peer = None
+        self._subscription_ids = set()
+
+    def on_connect(self, conn):
+        try:
+            self._peer = conn._channel.stream.sock.getpeername()
+        except Exception:
+            self._peer = ("unknown", 0)
+        logger.info("Client connected from %s", self._peer)
+
+    def on_disconnect(self, conn):
+        logger.info("Client %s disconnected", self._peer)
+        for sub_id in list(self._subscription_ids):
+            event_bus.unsubscribe(sub_id)
+        self._subscription_ids.clear()
+
+    def _require_authed(self):
+        if self.__class__._require_auth and not self._authenticated:
+            raise QmtAuthError("not authenticated")
+
+    def _log_request(self, method, detail="", level=logging.INFO):
+        """Log an incoming RPC request with peer info."""
+        peer = "%s:%s" % self._peer if self._peer else "unknown"
+        if detail:
+            logger.log(level, "[%s] %s -- %s", peer, method, detail)
+        else:
+            logger.log(level, "[%s] %s", peer, method)
+
+    def exposed_authenticate(self, nonce, timestamp, token):
+        ip = self._peer[0] if self._peer else "unknown"
+        self._log_request("authenticate", "ip=%s" % ip)
+        if rate_limiter.is_locked(ip):
+            logger.warning("[%s] authenticate blocked by rate limiter", ip)
+            return False
+        ok = verify_auth_token(self.__class__._auth_key, nonce, timestamp, token)
+        if ok:
+            self._authenticated = True
+            rate_limiter.record_success(ip)
+            logger.info("[%s] authenticate OK", ip)
+        else:
+            rate_limiter.record_failure(ip)
+            logger.warning("[%s] authenticate FAILED", ip)
+        return ok
+
+    def exposed_get_api_surface(self):
+        self._require_authed()
+        self._log_request("get_api_surface")
+        return self.__class__._api_surface
+
+    def exposed_call_xtdata(self, name, args, kwargs):
+        self._require_authed()
+        try:
+            arg_str = _summarize_args(args, kwargs)
+        except Exception:
+            arg_str = "<summarize failed>"
+        self._log_request("call_xtdata", "fn=%s(%s)" % (name, arg_str))
+
+        if is_download_function(name):
+            result = self._submit_download(name, args, kwargs)
+        elif xtdata is None:
+            result = {"status": STATUS_ERROR, "error_type": "ImportError",
+                      "error_message": "xtquant not available"}
+        else:
+            fn = getattr(xtdata, name, None)
+            if fn is None:
+                result = {"status": STATUS_ERROR, "error_type": "AttributeError",
+                          "error_message": f"xtdata has no attribute {name!r}"}
+            else:
+                try:
+                    # Materialize RPyC netref proxies → plain Python objects.
+                    # pybind11 (xtquant's C++ layer) rejects netref lists/dicts
+                    # because its strict type checking only accepts builtins.
+                    args = [_materialize(a) for a in args]
+                    kwargs = {k: _materialize(v) for k, v in kwargs.items()}
+                    raw = fn(*args, **kwargs)
+                    result = {"status": STATUS_OK, "data": serialize(raw)}
+                except Exception as e:
+                    logger.warning("call_xtdata(%s) raised %s: %s",
+                                   name, type(e).__name__, e)
+                    result = {"status": STATUS_ERROR, "error_type": type(e).__name__,
+                              "error_message": str(e)}
+
+        try:
+            result_summary = _summarize_rpc_result(result)
+        except Exception:
+            result_summary = "<summarize failed>"
+        self._log_request("call_xtdata", "fn=%s => %s" % (name, result_summary))
+        return result
+
+    def _submit_download(self, name, args, kwargs):
+        if xtdata is None:
+            return {"status": STATUS_ERROR, "error_type": "ImportError",
+                    "error_message": "xtquant not available"}
+        fn = getattr(xtdata, name, None)
+        if fn is None:
+            return {"status": STATUS_ERROR, "error_type": "AttributeError",
+                    "error_message": f"xtdata has no attribute {name!r}"}
+        try:
+            task_id = self.__class__._download_mgr.submit(
+                fn, function_name=name, has_progress=False, _args=args, **kwargs)
+            return {"status": STATUS_OK, "data": {"task_id": task_id, "_is_download_task": True}}
+        except Exception as e:
+            return {"status": STATUS_ERROR, "error_type": type(e).__name__,
+                    "error_message": str(e)}
+
+    def exposed_call_trader(self, name, args, kwargs):
+        self._require_authed()
+        try:
+            arg_str = _summarize_args(args, kwargs)
+        except Exception:
+            arg_str = "<summarize failed>"
+        self._log_request("call_trader", "method=%s(%s)" % (name, arg_str))
+        cm = self.__class__._connection_mgr
+        if cm is None:
+            result = {"status": STATUS_ERROR, "error_type": "NotConnected",
+                      "error_message": "connection manager not configured"}
+        else:
+            args = [_materialize(a) for a in args]
+            kwargs = {k: _materialize(v) for k, v in kwargs.items()}
+            result = cm.call_trader_method(name, args, kwargs)
+        try:
+            result_summary = _summarize_rpc_result(result)
+        except Exception:
+            result_summary = "<summarize failed>"
+        self._log_request("call_trader", "method=%s => %s" % (name, result_summary))
+        return result
+
+    def exposed_health(self):
+        self._require_authed()
+        self._log_request("health", level=logging.DEBUG)
+        cm = self.__class__._connection_mgr
+        if cm is None:
+            return {"connected": False, "trader_available": False}
+        return cm.get_health_status()
+
+    def exposed_subscribe_event(self, event_types, account_id=None):
+        self._require_authed()
+        self._log_request("subscribe_event", "types=%s account=%s" % (event_types, account_id))
+        sub_id = event_bus.subscribe(event_types, account_id)
+        self._subscription_ids.add(sub_id)
+        return sub_id
+
+    def exposed_unsubscribe_event(self, sub_id):
+        self._require_authed()
+        self._log_request("unsubscribe_event", "sub_id=%s" % sub_id)
+        self._subscription_ids.discard(sub_id)
+        return event_bus.unsubscribe(sub_id)
+
+    def exposed_poll_events(self, sub_id, max_count=100):
+        self._require_authed()
+        self._log_request("poll_events", "sub_id=%s max=%s" % (sub_id, max_count), level=logging.DEBUG)
+        sub = event_bus.get_subscription(sub_id)
+        if sub is None:
+            return [], 0
+        return sub.drain(max_count)
+
+    def exposed_query_download(self, task_id):
+        self._require_authed()
+        self._log_request("query_download", "task_id=%s" % task_id)
+        task = self.__class__._download_mgr.get_task(task_id)
+        if task is None:
+            return {"status": STATUS_ERROR, "error_type": "KeyError",
+                    "error_message": f"task {task_id!r} not found"}
+        return {"status": STATUS_OK, "data": task}
