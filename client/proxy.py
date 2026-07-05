@@ -16,7 +16,7 @@ class _RemoteCallable:
         self.__doc__ = meta.get("doc", "")
         self.__name__ = name
         # types.MethodType puts batch into self.__dict__ so __dir__ finds it
-        self.batch = types.MethodType(self._batch, self)
+        self.batch = types.MethodType(_RemoteCallable._batch, self)
 
     def __call__(self, *args, **kwargs):
         return self._client._call(self._surface, self._name, args, kwargs)

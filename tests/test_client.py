@@ -110,3 +110,50 @@ class TestQmtClientEvents:
             events, dropped = client.drain_events(sub_id)
             assert isinstance(events, list)
             client.unsubscribe(sub_id)
+
+
+class TestQmtClientBatch:
+    def test_batch_success(self, mock_server):
+        """Batch call through client returns results in order."""
+        from client import QmtClient
+        with QmtClient.connect("127.0.0.1", port=18899) as client:
+            results = client.xtdata.get_instrument_detail.batch([
+                (["000001.SZ"], {}),
+                (["000002.SZ"], {}),
+                (["000003.SZ"], {}),
+            ])
+            assert len(results) == 3
+            for i, r in enumerate(results):
+                assert r["status"] == "ok", f"call {i} failed: {r}"
+                assert "InstrumentID" in r["data"]
+
+    def test_batch_empty(self, mock_server):
+        """Empty batch returns empty results list."""
+        from client import QmtClient
+        with QmtClient.connect("127.0.0.1", port=18899) as client:
+            results = client.xtdata.get_instrument_detail.batch([])
+            assert len(results) == 0
+
+    def test_batch_nonexistent_function(self, mock_server):
+        """Non-existent function raises QmtError."""
+        from client import QmtClient
+        from client.exceptions import QmtError
+        with QmtClient.connect("127.0.0.1", port=18899) as client:
+            with pytest.raises(QmtError):
+                client.xtdata.nonexistent_func.batch([([], {})])
+
+    def test_batch_download_rejected(self, mock_server):
+        """download_* rejected — overall batch fails, raises QmtError."""
+        from client import QmtClient
+        from client.exceptions import QmtError
+        with QmtClient.connect("127.0.0.1", port=18899) as client:
+            with pytest.raises(QmtError):
+                client.xtdata.download_history_data.batch([
+                    (["600000.SH"], {"period": "1d"})])
+
+    def test_batch_dir_discovers_batch(self, mock_server):
+        """dir() on a remote callable includes 'batch'."""
+        from client import QmtClient
+        with QmtClient.connect("127.0.0.1", port=18899) as client:
+            names = dir(client.xtdata.get_instrument_detail)
+            assert "batch" in names
