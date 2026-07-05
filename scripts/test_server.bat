@@ -16,12 +16,14 @@ REM   scripts\test_server.bat -k "not live"   Skip live tests
 REM   scripts\test_server.bat -v -x            Verbose, stop on first failure
 REM ============================================================
 
-set VENV_PYTHON=.venv\Scripts\python.exe
+cd /d "%~dp0\.."
 
-if not exist "%VENV_PYTHON%" (
+if not exist ".venv\Scripts\python.exe" (
     echo [ERROR] .venv not found. Run scripts\setup_dev.bat first.
     exit /b 1
 )
+
+set "VENV_PYTHON=%CD%\.venv\Scripts\python.exe"
 
 echo === qmt-rpyc server test suite ===
 echo.
