@@ -1,3 +1,4 @@
+import os
 import secrets
 import time
 import threading
@@ -178,3 +179,26 @@ class QmtClient:
         self._pollers.clear()
         if self._conn:
             self._conn.close()
+
+    def self_test(self, test_symbols=None, include_bson_risk=False,
+                  timeout=30.0):
+        """Run a self-test against all read-only query interfaces.
+
+        Prints real-time ✓/✗/○ results to stdout, then returns a
+        structured report dict.
+
+        Args:
+            test_symbols: Optional dict overriding default test symbols.
+                Keys: sh_stock, sz_stock, etf, sector, market, account_id.
+            include_bson_risk: If True, also test get_market_data,
+                get_local_data, get_market_data_ex.
+            timeout: Reserved for future use.
+
+        Returns:
+            dict with keys: total, passed, failed, skipped,
+            duration_seconds, results (list of per-test dicts).
+        """
+        from client.self_test import run_self_test
+        return run_self_test(self, test_symbols=test_symbols,
+                             include_bson_risk=include_bson_risk,
+                             timeout=timeout)
