@@ -119,9 +119,9 @@ def main():
             d = r.get("data", {})
             if d:
                 print(f"    {d.get('InstrumentID', '?')}  "
-                      f"strike={d.get('StrikePrice', '?')}  "
-                      f"type={d.get('OptionType', '?')}  "
-                      f"name={d.get('InstrumentName', '?')}")
+                      f"strike={d.get('OptExercisePrice', '?')}  "
+                      f"type={d.get('optType', '?')}  "
+                      f"expire={d.get('ExpireDate', '?')}")
 
         # ── step 3: serial baseline ──────────────────────────────
         sample = options[:SERIAL_SAMPLE]
