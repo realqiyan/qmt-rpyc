@@ -17,18 +17,8 @@ if not exist ".venv\Scripts\python.exe" (
 
 set VENV_PYTHON=%CD%\.venv\Scripts\python.exe
 
-REM --- install dev dependencies -----------------------------------------------
-echo [1/2] Installing dev dependencies...
-%VENV_PYTHON% -m pip install -r requirements-dev.txt -q
-if %errorlevel% neq 0 (
-    echo [ERROR] pip install failed.
-    pause
-    exit /b 1
-)
-echo         Done.
-
 REM --- install client package in dev mode -------------------------------------
-echo [2/2] Installing qmt-rpyc-client in dev mode...
+echo [1/1] Installing qmt-rpyc-client in dev mode...
 %VENV_PYTHON% -m pip install -e . -q
 echo         Done.
 

@@ -185,9 +185,11 @@ server/              Windows-only — hosts xtquant, trader lifecycle, event bus
 ## Testing
 
 ```bash
-cd qmt-rpyc
-pip install -r requirements-dev.txt
-python -m pytest tests/ -v
+# Server-side tests (Windows only, requires venv + xtquant)
+scripts\test_server.bat
+
+# Client-side tests (cross-platform, only needs rpyc)
+bash scripts/test.sh
 ```
 
 Tests use `tests/_xtquant_mock.py` — a pure-Python in-memory mock. No Windows or `.pyd` files needed.
