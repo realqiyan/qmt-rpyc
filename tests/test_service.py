@@ -204,22 +204,23 @@ class TestBatchCallXtdata:
 
     def test_batch_with_partial_failure(self, service):
         """Some calls fail — each result carries its own status."""
+        from tests._xtquant_mock import _BATCH_FAIL_SENTINEL
         calls = [
             (["000001.SZ"], {}),
-            (["BAD_CODE"], {}),
+            ([_BATCH_FAIL_SENTINEL], {}),
             (["000003.SZ"], {}),
         ]
-        # get_instrument_detail in the mock doesn't validate codes, so we
-        # test partial failure by including a call that will cause an
-        # xtdata-level error — but the mock always succeeds.
-        # Instead, verify the result structure for a mix scenario by
-        # using get_instrument_detail which always returns a dict.
         result = service.exposed_batch_call_xtdata(
             "get_instrument_detail", calls)
         assert result["status"] == "ok"
         assert len(result["results"]) == 3
-        # All succeed with the current mock (mock returns dict for any input)
-        assert all(r["status"] == "ok" for r in result["results"])
+        # First and third calls succeed
+        assert result["results"][0]["status"] == "ok"
+        assert result["results"][2]["status"] == "ok"
+        # Second call fails
+        assert result["results"][1]["status"] == "error"
+        assert result["results"][1]["error_type"] == "ValueError"
+        assert "mock batch failure" in result["results"][1]["error_message"]
 
     def test_batch_nonexistent_function(self, service):
         """Calling a non-existent function returns top-level error."""

@@ -2,6 +2,8 @@
 import numpy as np
 import pandas as pd
 
+_BATCH_FAIL_SENTINEL = "__BATCH_FAIL__"
+
 
 class _XtConstant:
     STOCK_BUY = 23
@@ -59,6 +61,8 @@ class _XtData:
         return 0
 
     def get_instrument_detail(self, code):
+        if code == _BATCH_FAIL_SENTINEL:
+            raise ValueError("mock batch failure")
         return {"InstrumentID": code, "InstrumentName": "TestStock"}
 
 
