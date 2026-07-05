@@ -302,6 +302,12 @@ class XtquantService(rpyc.Service):
 
     def exposed_batch_call_xtdata(self, name, calls):
         self._require_authed()
+
+        # ── early exit for empty batch ────────────────────────────
+        if not calls:
+            self._log_request("batch_call_xtdata", f"fn={name}, calls=0")
+            return {"status": STATUS_OK, "results": []}
+
         try:
             arg_str = f"fn={name}, calls={len(calls)}"
         except Exception:
@@ -339,6 +345,18 @@ class XtquantService(rpyc.Service):
                 "error_type": "AttributeError",
                 "error_message": f"xtdata has no attribute {name!r}",
             }
+
+        # ── structural validation ──────────────────────────────────
+        for i, call in enumerate(calls):
+            if not (isinstance(call, (list, tuple)) and len(call) == 2):
+                return {
+                    "status": STATUS_ERROR,
+                    "error_type": "TypeError",
+                    "error_message": (
+                        f"calls[{i}] must be (args, kwargs), "
+                        f"got {type(call).__name__}"
+                    ),
+                }
 
         # ── concurrent execution ─────────────────────────────────
         max_workers = min(len(calls), _BATCH_MAX_WORKERS)
