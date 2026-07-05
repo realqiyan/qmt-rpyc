@@ -156,13 +156,12 @@ def main():
             speedup = t_proj / t_batch if t_batch > 0 else 0
             print(f"  Projected ser.: {t_proj:.1f}s")
             print(f"  Speedup:        {speedup:.1f}x")
-            if speedup >= 4:
-                print(f"  ✓  ProcessPoolExecutor 有效加速")
-            elif speedup >= 1.5:
+            if speedup >= 10:
+                print(f"  ✓  批量调用有效加速 (batch vs 逐个串行)")
+            elif speedup >= 2:
                 print(f"  ~  有加速但低于预期，可能局域网延迟占比较高")
             else:
-                print(f"  △  加速不明显 (单次调用 {t_serial_per_call:.0f}ms 太快，spawn 开销 > 收益)")
-                print(f"      如果冷启动时单次 > 100ms，加速比会显著提升。")
+                print(f"  △  加速不明显，串行调用已经很快，无需 batch")
 
     finally:
         client.close()
