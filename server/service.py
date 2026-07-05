@@ -9,6 +9,7 @@ from server.auth_limiter import rate_limiter
 from server.event_bus import event_bus
 from server.download_manager import is_download_function
 from server.serializer import serialize
+from server.batch_worker import execute_one
 
 logger = logging.getLogger(__name__)
 
@@ -98,24 +99,22 @@ def _materialize(obj, _depth=0):
 # ── batch call helpers ───────────────────────────────────────────────
 
 _BATCH_MAX_CALLS = 500
-_BATCH_MAX_WORKERS = int(os.environ.get("QMT_BATCH_MAX_WORKERS", "50"))
+_BATCH_MAX_WORKERS = int(os.environ.get("QMT_BATCH_MAX_WORKERS", "8"))
 
-
-def _execute_one(fn, args, kwargs):
-    """Execute a single xtdata call with materialization + serialization.
-
-    Standalone function (not a method) so ThreadPoolExecutor can pickle it.
-    Exceptions propagate to the caller — the batch loop catches them.
-    """
-    args = [_materialize(a) for a in args]
-    kwargs = {k: _materialize(v) for k, v in kwargs.items()}
-    raw = fn(*args, **kwargs)
-    return {"status": STATUS_OK, "data": serialize(raw)}
 
 try:
     from xtquant import xtdata
 except ImportError:
     xtdata = None
+
+# Auto-detect whether xtdata is the real pybind11 module or a test mock.
+# Real modules have __file__; mock instances (e.g. _XtData()) do not.
+# ProcessPoolExecutor only makes sense for real pybind11 (GIL-bound) code.
+_USE_PROCESS_POOL = (
+    xtdata is not None
+    and hasattr(xtdata, "__file__")
+    and os.environ.get("QMT_BATCH_EXECUTOR", "process") == "process"
+)
 
 
 class QmtAuthError(Exception):
@@ -362,12 +361,30 @@ class XtquantService(rpyc.Service):
         max_workers = min(len(calls), _BATCH_MAX_WORKERS)
         results = [None] * len(calls)
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        # Materialize args before submitting to executor.
+        # For ProcessPoolExecutor this is redundant (pickle serialises
+        # away netref proxies), but for ThreadPoolExecutor (test mock
+        # fallback) it is required because pybind11 rejects netref types.
+        materialized_calls = [
+            ([_materialize(a) for a in args],
+             {k: _materialize(v) for k, v in kwargs.items()})
+            for args, kwargs in calls
+        ]
 
-        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        if _USE_PROCESS_POOL:
+            from concurrent.futures import ProcessPoolExecutor as _PoolExecutor
+        else:
+            from concurrent.futures import ThreadPoolExecutor as _PoolExecutor
+        from concurrent.futures import as_completed
+
+        with _PoolExecutor(max_workers=max_workers) as ex:
+            # Pass the function *name* (string) instead of the fn object.
+            # When using ProcessPoolExecutor pybind11 objects cannot be
+            # pickled; when using ThreadPoolExecutor (test mock) either
+            # works, but name is universally safe.
             futures = {
-                ex.submit(_execute_one, fn, args, kwargs): i
-                for i, (args, kwargs) in enumerate(calls)
+                ex.submit(execute_one, name, args, kwargs): i
+                for i, (args, kwargs) in enumerate(materialized_calls)
             }
             for f in as_completed(futures):
                 i = futures[f]
