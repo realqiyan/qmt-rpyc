@@ -1,2 +1,0 @@
--r requirements-server.txt
-pytest>=8.0.0

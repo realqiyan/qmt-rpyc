@@ -9,8 +9,8 @@ class _XtConstant:
     STOCK_BUY = 23
     STOCK_SELL = 24
     FIX_PRICE = 5
-    MARKET_SH = 1
-    MARKET_SZ = 0
+    SH_MARKET = 0
+    SZ_MARKET = 1
 
 
 class StockAccount:
@@ -53,7 +53,7 @@ class _XtData:
         return {code: {"last_price": 10.0, "volume": 1000}
                 for code in code_list}
 
-    def get_trading_calendar(self, market="SSE"):
+    def get_trading_calendar(self, market="SH", start_time="", end_time="", tradetimes=False):
         return ["20240101", "20240102", "20240103"]
 
     def download_history_data(self, stock_code, period="1d",

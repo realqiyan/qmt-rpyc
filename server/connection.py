@@ -22,7 +22,6 @@ _ACCOUNT_METHODS = {
     "order_stock", "cancel_order_stock", "cancel_order_stock_sysid",
     "query_stock_asset", "query_stock_order", "query_stock_orders",
     "query_stock_trades", "query_stock_position", "query_stock_positions",
-    "query_account_status",
 }
 
 
@@ -338,7 +337,7 @@ class ConnectionManager:
                     # No account ― test data path as lightweight liveness probe
                     try:
                         from xtquant import xtdata
-                        cal = xtdata.get_trading_calendar("SSE")
+                        cal = xtdata.get_trading_calendar("SH")
                         if cal is not None:
                             result_container[0] = True
                     except ImportError:

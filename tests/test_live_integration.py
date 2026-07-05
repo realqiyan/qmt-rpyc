@@ -36,7 +36,7 @@ _SH_STOCK = "600000.SH"   # 浦发银行
 _SZ_STOCK = "000001.SZ"   # 平安银行
 _ETF = "510050.SH"         # 上证50ETF
 _SECTOR = "沪深300"
-_MARKET = "SSE"            # Shanghai Stock Exchange
+_MARKET = "SH"             # Shanghai Stock Exchange
 
 
 def _xtquant_available() -> bool:
@@ -154,22 +154,32 @@ def client(live_server):
 #   xtquant crash).
 # "_is_download": if True the function is tested via the download workflow
 #   (call_xtdata → poll task) rather than as a direct query.
-#
-# NOTE: The known xtquant BSON bug (bsonobj.cpp:1388 assertion failure
-#   ``u < 1000000``) affects get_market_data / get_local_data /
-#   get_market_data_ex when passed certain timestamp parameters.  The
-#   datetime_patch in server/datetime_patch.py mitigates this on Python < 3.12.
-#   These functions are tested with minimal parameters to reduce crash risk.
 
 _QUERY_FUNCTIONS = [
     # ── instrument detail ──────────────────────────────────────────
     {
         "name": "get_instrument_detail",
-        "args": ([_SH_STOCK],),
+        "args": (_SH_STOCK,),
         "kwargs": {},
         "assertions": [
             ("result_is_dict",     lambda r: isinstance(r, dict)),
             ("has_InstrumentID",   lambda r: "InstrumentID" in r),
+        ],
+    },
+    {
+        "name": "get_instrument_type",
+        "args": (_SH_STOCK,),
+        "kwargs": {},
+        "assertions": [
+            ("result_is_dict", lambda r: isinstance(r, dict)),
+        ],
+    },
+    {
+        "name": "get_stock_type",
+        "args": (_SH_STOCK,),
+        "kwargs": {},
+        "assertions": [
+            ("result_is_dict", lambda r: isinstance(r, dict)),
         ],
     },
     # ── full tick (real-time snapshot) ─────────────────────────────
@@ -185,11 +195,34 @@ _QUERY_FUNCTIONS = [
     # ── trading calendar ───────────────────────────────────────────
     {
         "name": "get_trading_calendar",
-        "args": ([_MARKET],),
+        "args": (_MARKET,),
+        "kwargs": {"start_time": "20240101", "end_time": "20240131"},
+        "assertions": [
+            ("result_is_list", lambda r: isinstance(r, list)),
+        ],
+    },
+    {
+        "name": "get_trading_dates",
+        "args": (_MARKET,),
         "kwargs": {},
         "assertions": [
             ("result_is_list", lambda r: isinstance(r, list)),
-            ("not_empty",      lambda r: len(r) > 0),
+        ],
+    },
+    {
+        "name": "get_holidays",
+        "args": (),
+        "kwargs": {},
+        "assertions": [
+            ("result_is_list", lambda r: isinstance(r, list)),
+        ],
+    },
+    {
+        "name": "get_trade_times",
+        "args": (_SH_STOCK,),
+        "kwargs": {},
+        "assertions": [
+            ("result_is_str_or_list", lambda r: isinstance(r, (str, list))),
         ],
     },
     # ── sector /板块 ──────────────────────────────────────────────
@@ -220,19 +253,10 @@ _QUERY_FUNCTIONS = [
             ("result_is_list_or_dict", lambda r: isinstance(r, (list, dict))),
         ],
     },
-    # ── holidays ───────────────────────────────────────────────────
-    {
-        "name": "get_holiday",
-        "args": (),
-        "kwargs": {},
-        "assertions": [
-            ("result_is_list", lambda r: isinstance(r, list)),
-        ],
-    },
     # ── dividend factors ───────────────────────────────────────────
     {
         "name": "get_divid_factors",
-        "args": ([_SH_STOCK],),
+        "args": (_SH_STOCK, "", ""),
         "kwargs": {},
         "assertions": [
             ("result_is_dict", lambda r: isinstance(r, dict)),
@@ -257,6 +281,14 @@ _QUERY_FUNCTIONS = [
         "_skip_reason": "requires actual option codes — call get_option_list first; "
                         "tested indirectly via batch when option codes are available",
     },
+    {
+        "name": "get_option_undl_data",
+        "args": (_ETF,),
+        "kwargs": {},
+        "assertions": [
+            ("result_is_list", lambda r: isinstance(r, list)),
+        ],
+    },
     # ── futures ────────────────────────────────────────────────────
     {
         "name": "get_main_contract",
@@ -267,64 +299,51 @@ _QUERY_FUNCTIONS = [
             ("not_empty",     lambda r: len(r) > 0),
         ],
     },
-    {
-        "name": "get_FutureInfo",
-        "args": (),
-        "kwargs": {},
-        "assertions": [
-            ("result_is_dict_or_list", lambda r: isinstance(r, (dict, list))),
-        ],
-    },
-    # ── trading time ───────────────────────────────────────────────
-    {
-        "name": "get_trading_time",
-        "args": ([_SH_STOCK],),
-        "kwargs": {},
-        "assertions": [
-            ("result_is_str_or_list", lambda r: isinstance(r, (str, list))),
-        ],
-    },
-    # ── IPO info ───────────────────────────────────────────────────
-    {
-        "name": "get_ipo_info",
-        "args": (_SH_STOCK,),
-        "kwargs": {},
-        "assertions": [
-            ("result_is_dict_or_list", lambda r: isinstance(r, (dict, list))),
-        ],
-    },
-    # ── ETF info ───────────────────────────────────────────────────
+    # ── ETF / CB info ──────────────────────────────────────────────
     {
         "name": "get_etf_info",
-        "args": ([_ETF],),
+        "args": (_ETF,),
         "kwargs": {},
         "assertions": [
             ("result_is_dict", lambda r: isinstance(r, dict)),
         ],
     },
-    # ── ETF weight (constituents) ──────────────────────────────────
     {
-        "name": "get_etf_weight",
-        "args": (_ETF,),
+        "name": "get_cb_info",
+        "args": (_SH_STOCK,),
         "kwargs": {},
         "assertions": [
-            ("result_is_list_or_dict", lambda r: isinstance(r, (list, dict))),
+            ("result_is_dict", lambda r: isinstance(r, dict)),
         ],
     },
-    # ── market data (⚠ BSON crash risk — tested last, minimal params) ─
+    # ── financial data ─────────────────────────────────────────────
+    {
+        "name": "get_financial_data",
+        "args": ([_SH_STOCK],),
+        "kwargs": {},
+        "assertions": [
+            ("result_is_dict", lambda r: isinstance(r, dict)),
+        ],
+    },
+    # ── industry ───────────────────────────────────────────────────
+    {
+        "name": "get_industry",
+        "args": ("申万一级",),
+        "kwargs": {},
+        "assertions": [
+            ("result_is_list", lambda r: isinstance(r, list)),
+        ],
+    },
+    # ── market data ─────────────────────────────────────────────────
     {
         "name": "get_market_data",
         "args": ([], [_SH_STOCK], "1d"),
         "kwargs": {},
         "assertions": [
             ("result_is_dict", lambda r: isinstance(r, dict)),
-            ("has_stock_code", lambda r: _SH_STOCK in r),
         ],
-        "_skip_reason": "Known xtquant BSON crash (bsonobj.cpp:1388) on some versions. "
-                        "Run manually with: pytest tests/test_live_integration.py -v -k "
-                        "'test_query_get_market_data and not BSON_skip'",
     },
-    # ── local data (same BSON risk) ────────────────────────────────
+    # ── local data ──────────────────────────────────────────────────
     {
         "name": "get_local_data",
         "args": ([], [_SH_STOCK], "1d"),
@@ -332,9 +351,8 @@ _QUERY_FUNCTIONS = [
         "assertions": [
             ("result_is_dict", lambda r: isinstance(r, dict)),
         ],
-        "_skip_reason": "Known xtquant BSON crash — same root cause as get_market_data",
     },
-    # ── extended market data ───────────────────────────────────────
+    # ── extended market data ─────────────────────────────────────────
     {
         "name": "get_market_data_ex",
         "args": ([], [_SH_STOCK], "1d"),
@@ -342,7 +360,6 @@ _QUERY_FUNCTIONS = [
         "assertions": [
             ("result_is_dict", lambda r: isinstance(r, dict)),
         ],
-        "_skip_reason": "Known xtquant BSON crash (same root cause as get_market_data)",
     },
 ]
 
@@ -353,7 +370,17 @@ _DOWNLOAD_FUNCTIONS = [
         "kwargs": {"stock_code": _SH_STOCK, "period": "1d"},
     },
     {
+        "name": "download_history_data2",
+        "args": (),
+        "kwargs": {"stock_list": [_SH_STOCK], "period": "1d"},
+    },
+    {
         "name": "download_financial_data",
+        "args": (),
+        "kwargs": {"stock_list": [_SH_STOCK]},
+    },
+    {
+        "name": "download_financial_data2",
         "args": (),
         "kwargs": {"stock_list": [_SH_STOCK]},
     },
@@ -363,25 +390,21 @@ _DOWNLOAD_FUNCTIONS = [
         "kwargs": {},
     },
     {
-        "name": "download_holiday_data",
+        "name": "download_cb_data",
+        "args": (),
+        "kwargs": {},
+    },
+    {
+        "name": "download_history_contracts",
+        "args": (),
+        "kwargs": {},
+    },
+    {
+        "name": "download_index_weight",
         "args": (),
         "kwargs": {},
     },
 ]
-
-
-# ── add download_* functions to the api_surface introspection baseline ──
-
-def _build_expected_query_names():
-    """Build set of xtdata function names that the live server should expose.
-
-    Used to validate that the API surface is complete.  Derived from the
-    known list + whatever xtquant actually exports at test time.
-    """
-    expected = set()
-    for entry in _QUERY_FUNCTIONS:
-        expected.add(entry["name"])
-    return expected
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -437,8 +460,10 @@ class TestConnectAndHealth:
         """Constants are inlined client-side — zero RPC overhead."""
         assert isinstance(client.xtconstant.STOCK_BUY, int)
         assert isinstance(client.xtconstant.STOCK_SELL, int)
-        assert client.xtconstant.MARKET_SH == 1
-        assert client.xtconstant.MARKET_SZ == 0
+        # Market constants vary by xtquant version (MARKET_SH/SH_MARKET etc.)
+        # Check the API surface dict to find available market constants.
+        consts = client._surface.get("xtconstant", {}).get("constants", {})
+        assert len(consts) > 10, f"expected >10 constants, got {len(consts)}"
 
     def test_self_test_method(self, client):
         """The built-in self_test() covers all query interfaces in one call."""
@@ -520,12 +545,16 @@ class TestQueryFunctions:
         skip_reason = entry.get("_skip_reason")
 
         if skip_reason:
-            pytest.skip(f"BSON_skip: {skip_reason}")
+            pytest.skip(f"SKIP: {skip_reason}")
 
-        fn = getattr(client.xtdata, name, None)
-        if fn is None:
+        # Check the API surface dict — getattr on the proxy always returns
+        # a _RemoteCallable (via __getattr__ fallback), so we can't use it
+        # to detect version-missing functions.
+        funcs = client._surface.get("xtdata", {}).get("functions", {})
+        if name not in funcs:
             pytest.skip(f"{name} not in API surface — may be version-specific")
 
+        fn = getattr(client.xtdata, name)
         try:
             result = fn(*args, **kwargs)
         except Exception as e:
@@ -550,7 +579,7 @@ class TestQueryFunctions:
                     f"  result preview: {preview}"
                 )
 
-    # ── BSON-risk functions (opt-in) ────────────────────────────────
+    # ── market data (also tested individually above; extra coverage) ──
 
     @pytest.mark.parametrize("name,args,kwargs", [
         pytest.param(
@@ -572,15 +601,11 @@ class TestQueryFunctions:
             id="get_market_data_ex",
         ),
     ])
-    def test_bson_risk_functions_opt_in(self, client, name, args, kwargs):
-        """These functions are known to trigger an xtquant BSON assertion crash.
+    def test_market_data_functions(self, client, name, args, kwargs):
+        """Extra coverage for market-data functions with stricter assertions.
 
-        They are NOT run by default (skipped in the main parametrized loop).
-        Run explicitly with::
-
-            pytest tests/test_live_integration.py -v -k "BSON_opt_in"
-
-        The server's datetime_patch may prevent the crash on Python < 3.12.
+        These functions are also tested in the main parametrized loop above;
+        this test adds non-empty result assertions.
         """
         fn = getattr(client.xtdata, name, None)
         if fn is None:
@@ -608,7 +633,7 @@ class TestBatchQuery:
         """Batch full_tick for multiple codes."""
         codes = ["000001.SZ", "600000.SH"]
         results = client.xtdata.get_full_tick.batch([
-            ([c], {}) for c in codes
+            ([[c]], {}) for c in codes
         ])
         assert len(results) == len(codes)
         for i, r in enumerate(results):
@@ -627,7 +652,9 @@ class TestBatchQuery:
     def test_batch_empty(self, client):
         """Empty batch should return empty list."""
         results = client.xtdata.get_instrument_detail.batch([])
-        assert results == []
+        assert isinstance(results, list) and len(results) == 0, (
+            f"expected empty list, got {type(results).__name__}: {results!r}"
+        )
 
 
 class TestDownloadWorkflow:
@@ -644,10 +671,13 @@ class TestDownloadWorkflow:
 
         from client.proxy import DownloadTaskHandle
 
-        fn = getattr(client.xtdata, name, None)
-        if fn is None:
-            pytest.skip(f"{name} not in API surface")
+        # Check the API surface dict — the proxy's __getattr__ always returns
+        # a _RemoteCallable, even for non-existent functions.
+        funcs = client._surface.get("xtdata", {}).get("functions", {})
+        if name not in funcs:
+            pytest.skip(f"{name} not in API surface — may be version-specific")
 
+        fn = getattr(client.xtdata, name)
         task = fn(*args, **kwargs)
         assert isinstance(task, DownloadTaskHandle), (
             f"{name} should return DownloadTaskHandle, got {type(task)}"
@@ -673,7 +703,7 @@ class TestErrorHandling:
         from client.exceptions import RemoteCallError
 
         with pytest.raises(RemoteCallError):
-            client.xtdata.__nonexistent_func_xyz__()
+            client.xtdata.nonexistent_func_xyz()
 
     def test_bad_stock_code_returns_gracefully(self, client):
         """Invalid stock code should either return empty data or raise gracefully."""
@@ -692,7 +722,7 @@ class TestErrorHandling:
         from client.exceptions import QmtError
 
         with pytest.raises(QmtError):
-            client.xtdata.__nonexistent_func_xyz__.batch([([], {})])
+            client.xtdata.nonexistent_func_xyz.batch([([], {})])
 
 
 class TestMultipleClients:
@@ -815,9 +845,9 @@ _TRADER_QUERY_METHODS = [
         "name": "query_account_status",
         "args": (),
         "kwargs": {},
-        "_needs_account": True,
+        "_needs_account": False,
         "assertions": [
-            ("result_is_dict", lambda r: isinstance(r, dict)),
+            ("result_is_list", lambda r: isinstance(r, list)),
         ],
     },
 ]

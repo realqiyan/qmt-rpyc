@@ -3,3 +3,4 @@ rpyc>=6.0.0
 numpy>=1.24.0,<2
 pandas>=2.0.0,<3
 psutil>=5.0.0
+pytest>=8.0.0

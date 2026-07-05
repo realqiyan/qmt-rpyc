@@ -38,6 +38,13 @@ def build_api_surface():
             continue
         if isinstance(val, (int, float, str, bool)):
             constants[name] = val
+        elif hasattr(val, "__int__") and not callable(val):
+            # pybind11 / numpy integer types that quack like int
+            # but fail the strict isinstance check above
+            try:
+                constants[name] = int(val)
+            except Exception:
+                pass
 
     try:
         from xtquant import xttype

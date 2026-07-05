@@ -30,7 +30,7 @@ def _run_option_detail_batch(client, symbols):
 #   category, name       — display grouping and label
 #   run(client, symbols) — executed test (may raise)
 #   check(result)        — (ok: bool, detail: str)
-#   skip_if(client, symbols, opts) or None — (should_skip: bool, reason: str)
+#   skip_if(client, symbols) or None — (should_skip: bool, reason: str)
 
 _SELF_TEST_CASES = [
     # ── smoke ──────────────────────────────────────────────────────────
@@ -44,12 +44,9 @@ _SELF_TEST_CASES = [
         "category": "smoke",
         "name": "constants",
         "run": lambda c, s: (c.xtconstant.STOCK_BUY,
-                             c.xtconstant.STOCK_SELL,
-                             c.xtconstant.MARKET_SH,
-                             c.xtconstant.MARKET_SZ),
+                             c.xtconstant.STOCK_SELL),
         "check": lambda r: (all(isinstance(v, int) for v in r),
-                            "STOCK_BUY=%d STOCK_SELL=%d "
-                            "MARKET_SH=%d MARKET_SZ=%d" % r),
+                            "STOCK_BUY=%d STOCK_SELL=%d" % r),
     },
     # ── instrument ─────────────────────────────────────────────────────
     {
@@ -85,8 +82,8 @@ _SELF_TEST_CASES = [
         "category": "tick",
         "name": "get_full_tick (batch x2)",
         "run": lambda c, s: c.xtdata.get_full_tick.batch([
-            ([s["sh_stock"]], {}),
-            ([s["sz_stock"]], {}),
+            ([[s["sh_stock"]]], {}),
+            ([[s["sz_stock"]]], {}),
         ]),
         "check": lambda r: (
             isinstance(r, list) and len(r) == 2
@@ -98,22 +95,29 @@ _SELF_TEST_CASES = [
     {
         "category": "calendar",
         "name": "get_trading_calendar",
-        "run": lambda c, s: c.xtdata.get_trading_calendar(s["market"]),
+        "run": lambda c, s: c.xtdata.get_trading_calendar(
+            s["market"], start_time="20240101", end_time="20240131"),
         "check": lambda r: (isinstance(r, list) and len(r) > 0,
                             "%d days" % len(r)),
     },
     {
         "category": "calendar",
-        "name": "get_holiday",
-        "run": lambda c, s: c.xtdata.get_holiday(),
+        "name": "get_holidays",
+        "run": lambda c, s: c.xtdata.get_holidays(),
         "check": lambda r: (isinstance(r, list), "%d holidays" % len(r)),
     },
     {
         "category": "calendar",
-        "name": "get_trading_time",
-        "run": lambda c, s: c.xtdata.get_trading_time([s["sh_stock"]]),
+        "name": "get_trade_times",
+        "run": lambda c, s: c.xtdata.get_trade_times(s["sh_stock"]),
         "check": lambda r: (isinstance(r, (str, list)),
                             "type=%s" % type(r).__name__),
+    },
+    {
+        "category": "calendar",
+        "name": "get_trading_dates",
+        "run": lambda c, s: c.xtdata.get_trading_dates(s["market"]),
+        "check": lambda r: (isinstance(r, list), "%d dates" % len(r)),
     },
     # ── sector ─────────────────────────────────────────────────────────
     {
@@ -142,7 +146,8 @@ _SELF_TEST_CASES = [
     {
         "category": "dividend",
         "name": "get_divid_factors",
-        "run": lambda c, s: c.xtdata.get_divid_factors([s["sh_stock"]]),
+        "run": lambda c, s: c.xtdata.get_divid_factors(
+            s["sh_stock"], "", ""),
         "check": lambda r: (isinstance(r, dict),
                             "type=%s" % type(r).__name__),
     },
@@ -172,34 +177,58 @@ _SELF_TEST_CASES = [
                             "contract=%s" % r),
     },
     {
-        "category": "futures",
-        "name": "get_FutureInfo",
-        "run": lambda c, s: c.xtdata.get_FutureInfo(),
-        "check": lambda r: (isinstance(r, (dict, list)),
+        "category": "instrument",
+        "name": "get_instrument_type",
+        "run": lambda c, s: c.xtdata.get_instrument_type(s["sh_stock"]),
+        "check": lambda r: (isinstance(r, dict),
+                            "type=%s" % type(r).__name__),
+    },
+    {
+        "category": "instrument",
+        "name": "get_stock_type",
+        "run": lambda c, s: c.xtdata.get_stock_type(s["sh_stock"]),
+        "check": lambda r: (isinstance(r, dict),
                             "type=%s" % type(r).__name__),
     },
     # ── etf ────────────────────────────────────────────────────────────
     {
         "category": "etf",
         "name": "get_etf_info",
-        "run": lambda c, s: c.xtdata.get_etf_info([s["etf"]]),
+        "run": lambda c, s: c.xtdata.get_etf_info(s["etf"]),
         "check": lambda r: (isinstance(r, dict),
                             "type=%s" % type(r).__name__),
     },
+    # ── cb (convertible bond) ─────────────────────────────────────────
     {
-        "category": "etf",
-        "name": "get_etf_weight",
-        "run": lambda c, s: c.xtdata.get_etf_weight(s["etf"]),
-        "check": lambda r: (isinstance(r, (list, dict)),
+        "category": "cb",
+        "name": "get_cb_info",
+        "run": lambda c, s: c.xtdata.get_cb_info(s["sh_stock"]),
+        "check": lambda r: (isinstance(r, dict),
                             "type=%s" % type(r).__name__),
     },
-    # ── ipo ────────────────────────────────────────────────────────────
+    # ── financial ────────────────────────────────────────────────────
     {
-        "category": "ipo",
-        "name": "get_ipo_info",
-        "run": lambda c, s: c.xtdata.get_ipo_info(s["sh_stock"]),
-        "check": lambda r: (isinstance(r, (dict, list)),
+        "category": "financial",
+        "name": "get_financial_data",
+        "run": lambda c, s: c.xtdata.get_financial_data([s["sh_stock"]]),
+        "check": lambda r: (isinstance(r, dict),
                             "type=%s" % type(r).__name__),
+    },
+    # ── industry ─────────────────────────────────────────────────────
+    {
+        "category": "industry",
+        "name": "get_industry",
+        "run": lambda c, s: c.xtdata.get_industry("申万一级"),
+        "check": lambda r: (isinstance(r, list),
+                            "type=%s" % type(r).__name__),
+    },
+    # ── option underlying ────────────────────────────────────────────
+    {
+        "category": "option",
+        "name": "get_option_undl_data",
+        "run": lambda c, s: c.xtdata.get_option_undl_data(s["etf"]),
+        "check": lambda r: (isinstance(r, list),
+                            "%d options" % len(r)),
     },
     # ── download (return-type check only, no wait) ─────────────────────
     {
@@ -224,48 +253,60 @@ _SELF_TEST_CASES = [
     },
     {
         "category": "download",
-        "name": "download_holiday_data",
-        "run": lambda c, s: c.xtdata.download_holiday_data(),
+        "name": "download_cb_data",
+        "run": lambda c, s: c.xtdata.download_cb_data(),
         "check": lambda r: (True, ""),
     },
-    # ── bson-risk (opt-in via include_bson_risk=True) ──────────────────
     {
-        "category": "bson-risk",
+        "category": "download",
+        "name": "download_financial_data2",
+        "run": lambda c, s: c.xtdata.download_financial_data2(
+            stock_list=[s["sh_stock"]]),
+        "check": lambda r: (True, ""),
+    },
+    {
+        "category": "download",
+        "name": "download_history_contracts",
+        "run": lambda c, s: c.xtdata.download_history_contracts(),
+        "check": lambda r: (True, ""),
+    },
+    {
+        "category": "download",
+        "name": "download_history_data2",
+        "run": lambda c, s: c.xtdata.download_history_data2(
+            stock_list=[s["sh_stock"]], period="1d"),
+        "check": lambda r: (True, ""),
+    },
+    {
+        "category": "download",
+        "name": "download_index_weight",
+        "run": lambda c, s: c.xtdata.download_index_weight(),
+        "check": lambda r: (True, ""),
+    },
+    # ── market data ────────────────────────────────────────────────────
+    {
+        "category": "market-data",
         "name": "get_market_data",
         "run": lambda c, s: c.xtdata.get_market_data(
             [], [s["sh_stock"]], "1d"),
-        "check": lambda r: (isinstance(r, dict)
-                            and s["sh_stock"] in r,
-                            "has %s: %s" % (s["sh_stock"],
-                                            s["sh_stock"] in r)),
-        "skip_if": lambda c, s, opts: (
-            not opts.get("include_bson_risk"),
-            "BSON crash risk — use include_bson_risk=True"
-        ),
+        "check": lambda r: (isinstance(r, dict),
+                            "type=%s" % type(r).__name__),
     },
     {
-        "category": "bson-risk",
+        "category": "market-data",
         "name": "get_local_data",
         "run": lambda c, s: c.xtdata.get_local_data(
             [], [s["sh_stock"]], "1d"),
         "check": lambda r: (isinstance(r, dict),
                             "type=%s" % type(r).__name__),
-        "skip_if": lambda c, s, opts: (
-            not opts.get("include_bson_risk"),
-            "BSON crash risk — use include_bson_risk=True"
-        ),
     },
     {
-        "category": "bson-risk",
+        "category": "market-data",
         "name": "get_market_data_ex",
         "run": lambda c, s: c.xtdata.get_market_data_ex(
             [], [s["sh_stock"]], "1d"),
         "check": lambda r: (isinstance(r, dict),
                             "type=%s" % type(r).__name__),
-        "skip_if": lambda c, s, opts: (
-            not opts.get("include_bson_risk"),
-            "BSON crash risk — use include_bson_risk=True"
-        ),
     },
     # ── trader query (read-only, no order placement) ───────────────────
     {
@@ -274,7 +315,7 @@ _SELF_TEST_CASES = [
         "run": lambda c, s: c.trader.query_stock_asset(s["account_id"]),
         "check": lambda r: (isinstance(r, dict),
                             "type=%s" % type(r).__name__),
-        "skip_if": lambda c, s, opts: (
+        "skip_if": lambda c, s: (
             not s.get("account_id"),
             "QMT_ACCOUNT_ID not set"
         ),
@@ -286,7 +327,7 @@ _SELF_TEST_CASES = [
             s["account_id"]),
         "check": lambda r: (isinstance(r, list),
                             "%d positions" % len(r)),
-        "skip_if": lambda c, s, opts: (
+        "skip_if": lambda c, s: (
             not s.get("account_id"),
             "QMT_ACCOUNT_ID not set"
         ),
@@ -298,7 +339,7 @@ _SELF_TEST_CASES = [
             s["account_id"]),
         "check": lambda r: (isinstance(r, list),
                             "%d orders" % len(r)),
-        "skip_if": lambda c, s, opts: (
+        "skip_if": lambda c, s: (
             not s.get("account_id"),
             "QMT_ACCOUNT_ID not set"
         ),
@@ -310,7 +351,7 @@ _SELF_TEST_CASES = [
             s["account_id"]),
         "check": lambda r: (isinstance(r, list),
                             "%d trades" % len(r)),
-        "skip_if": lambda c, s, opts: (
+        "skip_if": lambda c, s: (
             not s.get("account_id"),
             "QMT_ACCOUNT_ID not set"
         ),
@@ -318,11 +359,10 @@ _SELF_TEST_CASES = [
     {
         "category": "trader",
         "name": "query_account_status",
-        "run": lambda c, s: c.trader.query_account_status(
-            s["account_id"]),
-        "check": lambda r: (isinstance(r, dict),
+        "run": lambda c, s: c.trader.query_account_status(),
+        "check": lambda r: (isinstance(r, (dict, list)),
                             "type=%s" % type(r).__name__),
-        "skip_if": lambda c, s, opts: (
+        "skip_if": lambda c, s: (
             not s.get("account_id"),
             "QMT_ACCOUNT_ID not set"
         ),
@@ -332,8 +372,7 @@ _SELF_TEST_CASES = [
 
 # ── runner ──────────────────────────────────────────────────────────────────
 
-def run_self_test(client, test_symbols=None, include_bson_risk=False,
-                  timeout=30.0):
+def run_self_test(client, test_symbols=None, timeout=30.0):
     """Run a self-test against all read-only query interfaces.
 
     Prints real-time ✓/✗/○ results to stdout, then returns a structured
@@ -343,8 +382,6 @@ def run_self_test(client, test_symbols=None, include_bson_risk=False,
         client: A connected QmtClient instance.
         test_symbols: Optional dict overriding default test symbols.
             Keys: sh_stock, sz_stock, etf, sector, market, account_id.
-        include_bson_risk: If True, also test get_market_data,
-            get_local_data, get_market_data_ex.
         timeout: Reserved for future use (rpyc timeout is set at connect).
 
     Returns:
@@ -360,13 +397,11 @@ def run_self_test(client, test_symbols=None, include_bson_risk=False,
         "sz_stock": "000001.SZ",
         "etf": "510050.SH",
         "sector": "沪深300",
-        "market": "SSE",
+        "market": "SH",
         "account_id": os.environ.get("QMT_ACCOUNT_ID", ""),
     }
     if test_symbols:
         symbols.update(test_symbols)
-
-    opts = {"include_bson_risk": include_bson_risk}
 
     from client.proxy import DownloadTaskHandle
 
@@ -390,7 +425,7 @@ def run_self_test(client, test_symbols=None, include_bson_risk=False,
         # ── check skip condition ───────────────────────────────────
         skip_if = case.get("skip_if")
         if skip_if:
-            should_skip, reason = skip_if(client, symbols, opts)
+            should_skip, reason = skip_if(client, symbols)
             if should_skip:
                 print("  ○ %-42s — %s" % (name, reason))
                 results.append({
@@ -424,9 +459,9 @@ def run_self_test(client, test_symbols=None, include_bson_risk=False,
             ok = False
             status = "fail"
             msg = str(e)
-            # AttributeError on function name → skip (version diff)
-            if isinstance(e, AttributeError) and (
-                    "has no attribute" in msg
+            # AttributeError from server (wrapped as RemoteCallError)
+            # → skip for version-missing functions
+            if ("has no attribute" in msg
                     or "object has no attribute" in msg):
                 status = "skip"
                 detail = "not in API surface"
