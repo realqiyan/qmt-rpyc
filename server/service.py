@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import threading
 
 import rpyc
@@ -360,16 +361,15 @@ class XtquantService(rpyc.Service):
         # ── concurrent execution ─────────────────────────────────
         max_workers = min(len(calls), _BATCH_MAX_WORKERS)
         results = [None] * len(calls)
+        _t_total = time.time()
 
         # Materialize args before submitting to executor.
-        # For ProcessPoolExecutor this is redundant (pickle serialises
-        # away netref proxies), but for ThreadPoolExecutor (test mock
-        # fallback) it is required because pybind11 rejects netref types.
         materialized_calls = [
             ([_materialize(a) for a in args],
              {k: _materialize(v) for k, v in kwargs.items()})
             for args, kwargs in calls
         ]
+        _t_mat = time.time()
 
         if _USE_PROCESS_POOL:
             from concurrent.futures import ProcessPoolExecutor as _PoolExecutor
@@ -377,16 +377,18 @@ class XtquantService(rpyc.Service):
             from concurrent.futures import ThreadPoolExecutor as _PoolExecutor
         from concurrent.futures import as_completed
 
+        _t_setup = time.time()
         with _PoolExecutor(max_workers=max_workers) as ex:
-            # Pass the function *name* (string) instead of the fn object.
-            # When using ProcessPoolExecutor pybind11 objects cannot be
-            # pickled; when using ThreadPoolExecutor (test mock) either
-            # works, but name is universally safe.
             futures = {
                 ex.submit(execute_one, name, args, kwargs): i
                 for i, (args, kwargs) in enumerate(materialized_calls)
             }
+            _t_submit = time.time()
+            first_result = True
             for f in as_completed(futures):
+                if first_result:
+                    _t_first = time.time()
+                    first_result = False
                 i = futures[f]
                 try:
                     results[i] = f.result()
@@ -396,6 +398,22 @@ class XtquantService(rpyc.Service):
                         "error_type": type(e).__name__,
                         "error_message": str(e),
                     }
+            _t_last = time.time()
+
+        # ── timing log ───────────────────────────────────────────
+        _pool_type = "ProcessPool" if _USE_PROCESS_POOL else "ThreadPool"
+        _n = len(calls)
+        logger.info(
+            "batch timing: %s workers=%d calls=%d | "
+            "materialize=%.0fms setup=%.0fms submit=%.0fms "
+            "first_result=%.0fms total=%.0fms",
+            _pool_type, max_workers, _n,
+            (_t_mat - _t_total) * 1000,
+            (_t_setup - _t_mat) * 1000,
+            (_t_submit - _t_setup) * 1000,
+            (_t_first - _t_total) * 1000,
+            (_t_last - _t_total) * 1000,
+        )
 
         # ── summary log ──────────────────────────────────────────
         ok_count = sum(1 for r in results if r.get("status") == STATUS_OK)
