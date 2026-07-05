@@ -1,5 +1,6 @@
 import time
 import logging
+import types
 
 from client.exceptions import _map_error
 
@@ -14,9 +15,43 @@ class _RemoteCallable:
         self._meta = meta
         self.__doc__ = meta.get("doc", "")
         self.__name__ = name
+        # types.MethodType puts batch into self.__dict__ so __dir__ finds it
+        self.batch = types.MethodType(self._batch, self)
 
     def __call__(self, *args, **kwargs):
         return self._client._call(self._surface, self._name, args, kwargs)
+
+    def _batch(self, calls):
+        """Execute this function in batch mode.
+
+        Send multiple (args, kwargs) pairs in a single RPC call, executed
+        concurrently on the server.
+
+        Args:
+            calls: list of (args, kwargs) tuples
+
+        Returns:
+            list of dicts, each {"status": "ok", "data": ...}
+                         or {"status": "error", "error_type": "...",
+                              "error_message": "..."}
+            in the same order as the input calls.
+
+        Raises:
+            QmtError: if the overall batch dispatch fails (e.g. connection
+                      lost, server rejects download_* function, or batch
+                      too large)
+
+        Example:
+            codes = client.xtdata.get_option_list("510050.SH", "")
+            results = client.xtdata.get_option_detail_data.batch([
+                ([code], {}) for code in codes
+            ])
+            ok = [r["data"] for r in results if r["status"] == "ok"]
+        """
+        return self._client._batch_call(self._surface, self._name, calls)
+
+    def __dir__(self):
+        return list(self.__dict__.keys())
 
 
 class _RemoteModule:
