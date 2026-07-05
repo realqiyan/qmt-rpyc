@@ -363,12 +363,12 @@ class XtquantService(rpyc.Service):
         results = [None] * len(calls)
         _t_total = time.time()
 
-        # Materialize args before submitting to executor.
-        materialized_calls = [
-            ([_materialize(a) for a in args],
-             {k: _materialize(v) for k, v in kwargs.items()})
-            for args, kwargs in calls
-        ]
+        # Convert RPyC netref proxies to plain Python objects.
+        # rpyc.utils.classic.obtain does this in one efficient RPC —
+        # iterating element-by-element with isinstance checks on netrefs
+        # triggers an RPC per element and takes seconds on LAN.
+        import rpyc.utils.classic
+        materialized_calls = rpyc.utils.classic.obtain(calls)
         _t_mat = time.time()
 
         if _USE_PROCESS_POOL:
