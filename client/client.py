@@ -123,6 +123,29 @@ class QmtClient:
             return data
         raise _map_error(resp)
 
+    def _batch_call(self, surface, name, calls):
+        """Dispatch a batch call to the server.
+
+        Args:
+            surface: must be "xtdata" (trader batch not supported)
+            name: xtdata function name
+            calls: list of (args, kwargs) tuples
+
+        Returns:
+            list of result dicts, same order as calls
+
+        Raises:
+            ValueError: if surface is not "xtdata"
+            QmtError: if the overall batch dispatch fails
+        """
+        if surface != "xtdata":
+            raise ValueError(
+                f"batch_call only supports xtdata, got {surface}")
+        resp = self._conn.root.batch_call_xtdata(name, calls)
+        if resp.get("status") != "ok":
+            raise _map_error(resp)
+        return resp["results"]
+
     def health(self):
         return self._conn.root.health()
 
