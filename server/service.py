@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -303,6 +304,11 @@ class XtquantService(rpyc.Service):
     def exposed_batch_call_xtdata(self, name, calls):
         self._require_authed()
 
+        # ── deserialise calls (JSON string from new clients,
+        #     netref list from old clients) ───────────────────────
+        if isinstance(calls, str):
+            calls = json.loads(calls)
+
         # ── early exit for empty batch ────────────────────────────
         if not calls:
             self._log_request("batch_call_xtdata", f"fn={name}, calls=0")
@@ -363,12 +369,12 @@ class XtquantService(rpyc.Service):
         results = [None] * len(calls)
         _t_total = time.time()
 
-        # Convert RPyC netref proxies to plain Python objects.
-        # rpyc.utils.classic.obtain does this in one efficient RPC —
-        # iterating element-by-element with isinstance checks on netrefs
-        # triggers an RPC per element and takes seconds on LAN.
-        import rpyc.utils.classic
-        materialized_calls = rpyc.utils.classic.obtain(calls)
+        # Materialize args before submitting to executor.
+        materialized_calls = [
+            ([_materialize(a) for a in args],
+             {k: _materialize(v) for k, v in kwargs.items()})
+            for args, kwargs in calls
+        ]
         _t_mat = time.time()
 
         if _USE_PROCESS_POOL:

@@ -142,7 +142,13 @@ class QmtClient:
         if surface != "xtdata":
             raise ValueError(
                 f"batch_call only supports xtdata, got {surface}")
-        resp = self._conn.root.batch_call_xtdata(name, calls)
+        # Serialize calls as JSON to avoid RPyC netref round-trips
+        # during server-side materialization.  A nested list of
+        # (args, kwargs) tuples triggers ~4 reverse RPCs per call
+        # element; for 134 calls that adds 29s on a LAN connection.
+        import json
+        calls_json = json.dumps(calls, ensure_ascii=False)
+        resp = self._conn.root.batch_call_xtdata(name, calls_json)
         if resp.get("status") != "ok":
             raise _map_error(resp)
         return resp["results"]
