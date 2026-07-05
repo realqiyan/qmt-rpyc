@@ -4,6 +4,8 @@ import time
 import threading
 import logging
 
+import rpyc
+
 from common.protocol import make_auth_token
 from client.proxy import _RemoteModule, _RemoteTrader, DownloadTaskHandle
 from client.exceptions import QmtAuthError, _map_error
@@ -57,9 +59,9 @@ class QmtClient:
     @classmethod
     def connect(cls, host, port=18812, auth_key=None,
                 timeout=30, tls_config=None, **protocol_config):
-        import rpyc
         config = {
             "allow_public_attrs": True,
+            "allow_pickle": True,
             "sync_request_timeout": timeout,
             **protocol_config,
         }
@@ -91,7 +93,7 @@ class QmtClient:
             raise QmtAuthError("Auth", "authentication failed")
 
     def _init_surface(self):
-        self._surface = self._conn.root.get_api_surface()
+        self._surface = rpyc.classic.obtain(self._conn.root.get_api_surface())
         self._xtdata = _RemoteModule(self, "xtdata", self._surface.get("xtdata", {}))
         self._trader = _RemoteTrader(self, self._surface.get("XtQuantTrader", {}))
         self._xtconstant = _RemoteModule(self, "xtconstant", self._surface.get("xtconstant", {}))
@@ -115,6 +117,12 @@ class QmtClient:
             resp = self._conn.root.call_trader(name, list(args), dict(kwargs))
         else:
             raise ValueError(f"unknown surface: {surface}")
+
+        # Materialize netref proxy → local Python objects.
+        # Without this, every dict/list access in user code triggers a hidden
+        # RPC back to the server, making remote use unusably slow and breaking
+        # json.dumps / pickle / isinstance checks.
+        resp = rpyc.classic.obtain(resp)
 
         status = resp.get("status")
         if status == "ok":
@@ -149,12 +157,13 @@ class QmtClient:
         import json
         calls_json = json.dumps(calls, ensure_ascii=False)
         resp = self._conn.root.batch_call_xtdata(name, calls_json)
+        resp = rpyc.classic.obtain(resp)
         if resp.get("status") != "ok":
             raise _map_error(resp)
         return resp["results"]
 
     def health(self):
-        return self._conn.root.health()
+        return rpyc.classic.obtain(self._conn.root.health())
 
     def subscribe(self, event_types, account_id=None, on_event=None, poll_interval=1.0):
         sub_id = self._conn.root.subscribe_event(list(event_types), account_id)
@@ -171,7 +180,7 @@ class QmtClient:
         self._conn.root.unsubscribe_event(sub_id)
 
     def drain_events(self, sub_id, max_count=100):
-        return self._conn.root.poll_events(sub_id, max_count)
+        return rpyc.classic.obtain(self._conn.root.poll_events(sub_id, max_count))
 
     def __enter__(self):
         return self

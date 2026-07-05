@@ -8,3 +8,4 @@ venv/
 start_server.local.bat
 .env
 tmp/
+nul

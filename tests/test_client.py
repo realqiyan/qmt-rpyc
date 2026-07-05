@@ -36,6 +36,7 @@ def mock_server():
 
     srv = ThreadedServer(XtquantService, port=18899,
                          protocol_config={"allow_public_attrs": True,
+                                          "allow_pickle": True,
                                           "sync_request_timeout": 300})
     t = threading.Thread(target=srv.start, daemon=True)
     t.start()

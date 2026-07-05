@@ -96,6 +96,7 @@ def start_server(cfg, tls=None):
 
     config = {
         "allow_public_attrs": True,
+        "allow_pickle": True,
         "sync_request_timeout": 300,
     }
 
