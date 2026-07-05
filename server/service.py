@@ -11,7 +11,6 @@ from server.auth_limiter import rate_limiter
 from server.event_bus import event_bus
 from server.download_manager import is_download_function
 from server.serializer import serialize
-from server.batch_worker import execute_one
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +77,9 @@ def _summarize_rpc_result(result, max_str_len=120):
     data = result.get("data")
     return f"OK {_summarize_value(data)}"
 
-# RPyC passes container types as netref proxies.  pybind11 (xtquant's C++
-# layer) only accepts plain builtins.list / builtins.dict — netref proxies
-# trip its strict type checking.  Materialize recursively before calling
-# into xtquant.
+# RPyC passes container types as netref proxies.  xtdata functions expect
+# plain builtins.list / builtins.dict — netref proxies trip the type
+# checking.  Materialize recursively before calling into xtquant.
 _MATERIALIZE_MAX_DEPTH = 64
 
 
@@ -104,19 +102,23 @@ _BATCH_MAX_CALLS = 500
 _BATCH_MAX_WORKERS = int(os.environ.get("QMT_BATCH_MAX_WORKERS", "8"))
 
 
+def _execute_one(name, args, kwargs):
+    """Execute a single xtdata call, return {"status", "data"}.
+
+    Standalone function (not a method) for executor compatibility.
+    Exceptions propagate to the caller — the batch loop catches them.
+    """
+    from xtquant import xtdata as _xtdata
+
+    fn = getattr(_xtdata, name)
+    raw = fn(*args, **kwargs)
+    return {"status": STATUS_OK, "data": serialize(raw)}
+
+
 try:
     from xtquant import xtdata
 except ImportError:
     xtdata = None
-
-# Auto-detect whether xtdata is the real pybind11 module or a test mock.
-# Real modules have __file__; mock instances (e.g. _XtData()) do not.
-# ProcessPoolExecutor only makes sense for real pybind11 (GIL-bound) code.
-_USE_PROCESS_POOL = (
-    xtdata is not None
-    and hasattr(xtdata, "__file__")
-    and os.environ.get("QMT_BATCH_EXECUTOR", "process") == "process"
-)
 
 
 class QmtAuthError(Exception):
@@ -377,16 +379,12 @@ class XtquantService(rpyc.Service):
         ]
         _t_mat = time.time()
 
-        if _USE_PROCESS_POOL:
-            from concurrent.futures import ProcessPoolExecutor as _PoolExecutor
-        else:
-            from concurrent.futures import ThreadPoolExecutor as _PoolExecutor
-        from concurrent.futures import as_completed
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         _t_setup = time.time()
-        with _PoolExecutor(max_workers=max_workers) as ex:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
             futures = {
-                ex.submit(execute_one, name, args, kwargs): i
+                ex.submit(_execute_one, name, args, kwargs): i
                 for i, (args, kwargs) in enumerate(materialized_calls)
             }
             _t_submit = time.time()
@@ -407,13 +405,12 @@ class XtquantService(rpyc.Service):
             _t_last = time.time()
 
         # ── timing log ───────────────────────────────────────────
-        _pool_type = "ProcessPool" if _USE_PROCESS_POOL else "ThreadPool"
         _n = len(calls)
         logger.info(
-            "batch timing: %s workers=%d calls=%d | "
+            "batch timing: ThreadPool workers=%d calls=%d | "
             "materialize=%.0fms setup=%.0fms submit=%.0fms "
             "first_result=%.0fms total=%.0fms",
-            _pool_type, max_workers, _n,
+            max_workers, _n,
             (_t_mat - _t_total) * 1000,
             (_t_setup - _t_mat) * 1000,
             (_t_submit - _t_setup) * 1000,
