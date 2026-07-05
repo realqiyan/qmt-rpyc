@@ -28,7 +28,7 @@ start-rpyc.bat
 ### Client (Linux/macOS/Windows)
 
 ```bash
-# One-click client venv
+# One-click client setup
 scripts/setup.sh
 ```
 
@@ -53,10 +53,22 @@ print(client.xtconstant.STOCK_BUY)  # → 23
 # Trading (account_id passed as string, server auto-wraps StockAccount)
 order_id = client.trader.order_stock("1000000365", "600000.SH",
                                       client.xtconstant.STOCK_BUY, 100,
-                                      client.xtconstant.FIX_PRICE, 10.5)
+                                      client.xtconstant.FIX_PRICE, 0.1)
+
+# Batch calls — execute N calls to the same xtdata function in one RPC round-trip
+results = client.xtdata.get_instrument_detail.batch([
+    (["600000.SH"], {}),
+    (["000001.SZ"], {}),
+    (["510050.SH"], {}),
+])
+# results[i] = {"status": "ok", "data": {...}} or {"status": "error", ...}
 
 # Health
 print(client.health())
+
+# Self-test — exercises all read-only query interfaces, prints ✓/✗/○ report
+report = client.self_test()
+print(f"{report['passed']} passed, {report['failed']} failed, {report['skipped']} skipped")
 
 # Context manager (auto-closes on exit)
 with QmtClient.connect("192.168.1.100", port=18812, auth_key="my-key") as client:
@@ -92,7 +104,8 @@ All server configuration lives in `.env` (copy from `.env.example`):
 | `QMT_HEARTBEAT_TIMEOUT` | `5` | Seconds before heartbeat times out |
 | `QMT_HEARTBEAT_MAX_FAILURES` | `3` | Consecutive failures before triggering reconnect |
 | `QMT_RECONNECT_MAX_ATTEMPTS` | `0` | Max reconnect attempts (0 = unlimited) |
-| `QMT_RPYC_LOG_DIR` | `logs` | Log directory (daily rotation, 30-day retention) |
+| `QMT_BATCH_MAX_WORKERS` | `50` | Max concurrent workers for `batch_call_xtdata` |
+| `QMT_RPYC_LOG_DIR` | `logs` | Log directory (daily rotation, 7-day retention) |
 
 ## TLS / mTLS
 
@@ -109,6 +122,67 @@ client = QmtClient.connect(
 ```
 
 For mTLS, also pass `certfile` and `keyfile` in `tls_config`.
+
+## Batch API
+
+Every `_RemoteCallable` on `client.xtdata` has a `.batch()` method for executing multiple calls to the same xtdata function in a single RPC round-trip. This is the primary way to reduce latency for option-chain or multi-instrument queries.
+
+**Server side:**
+- Calls are executed concurrently via `ThreadPoolExecutor` with `max_workers = min(len(calls), QMT_BATCH_MAX_WORKERS)` (env-configurable, default 50)
+- Max 500 calls per batch (hard cap `_BATCH_MAX_CALLS`)
+- `download_*` functions are rejected in batch mode (use `call_xtdata` for async downloads)
+- Each call independently materializes args (RPyC netref → plain Python), calls xtdata, and serializes the result
+
+**Client side:**
+
+```python
+# Get all option codes, then batch-query detail for each
+codes = client.xtdata.get_option_list("510050.SH", "")
+results = client.xtdata.get_option_detail_data.batch([
+    ([code], {}) for code in codes
+])
+
+# Each result carries independent status
+for i, r in enumerate(results):
+    if r["status"] == "ok":
+        print(f"{codes[i]}: {r['data']}")
+    else:
+        print(f"{codes[i]}: ERROR [{r['error_type']}] {r['error_message']}")
+
+# Errors are per-call — partial success is normal
+ok_count = sum(1 for r in results if r["status"] == "ok")
+print(f"{ok_count}/{len(results)} succeeded")
+```
+
+Error handling:
+- Per-call failures → individual result with `status: "error"`, `error_type`, `error_message`
+- Batch-level rejections (download function, batch too large, nonexistent function) → raises `QmtError`
+
+## Client Self-Test
+
+`QmtClient.self_test()` exercises all read-only query interfaces against the live server and prints a real-time ✓/✗/○ report:
+
+```python
+client = QmtClient.connect("192.168.1.100", port=18812, auth_key="my-key")
+
+# Run all tests with default symbols
+report = client.self_test()
+
+# Override symbols, skip trader tests by clearing account_id
+report = client.self_test(test_symbols={
+    "sh_stock": "601318.SH",
+    "etf": "159919.SZ",
+    "account_id": "",  # skip all trader tests
+})
+
+# Inspect individual results
+for item in report["results"]:
+    print(f"{item['status']:4s} {item['category']:12s} {item['name']}")
+```
+
+The self-test covers: smoke (health, constants), instrument detail, tick data, trading calendar, sectors, index weights, dividend factors, options, futures, ETF info, convertible bonds, financial data, industry data, market data, downloads (return-type check), and trader queries (asset, positions, orders, trades, account status — skipped if no account configured).
+
+Functions missing from the API surface (version differences) and trader queries without an account are auto-skipped rather than failing.
 
 ## Events
 
@@ -166,15 +240,25 @@ server/              Windows-only — hosts xtquant, trader lifecycle, event bus
 
 | Component | File | Role |
 |---|---|---|
-| **XtquantService** | `server/service.py` | RPyC service — one instance per client. Handles auth, API dispatch, event subscribe/poll, download queries. Materializes RPyC netref proxies to plain Python objects before calling xtquant (pybind11 rejects netref types). |
+| **XtquantService** | `server/service.py` | RPyC service — one instance per client. Handles auth, API dispatch (`call_xtdata`, `call_trader`, `batch_call_xtdata`), event subscribe/poll, download queries. Materializes RPyC netref proxies to plain Python objects before calling xtquant (pybind11 rejects netref types). |
 | **ConnectionManager** | `server/connection.py` | Trader lifecycle: init → connect → heartbeat → auto-reconnect. The `_Callback` inner class bridges xtquant C++ callbacks into the EventBus. Auto-wraps string `account_id` → `StockAccount` for trader methods. |
 | **EventBus** | `server/event_bus.py` | Pub/sub with per-subscription event queues (bounded at 1000 events). Supports filtering by event type and account ID. |
 | **DownloadTaskManager** | `server/download_manager.py` | Thread-pool executor for async `download_*` calls. Poll via `query_download(task_id)`. |
-| **API Surface** | `server/api_surface.py` | Introspects xtdata, XtQuantTrader, xtconstant at startup. Clients receive this descriptor to build proxy objects — no per-call introspection needed. |
-| **Serializer** | `server/serializer.py` | Recursively converts numpy arrays, pandas DataFrames, and xtquant objects to JSON-safe dicts. |
+| **API Surface** | `server/api_surface.py` | Introspects xtdata functions, XtQuantTrader methods, xtconstant constants, and xttype classes at startup. Clients receive this descriptor to build proxy objects — no per-call introspection needed. |
+| **Serializer** | `server/serializer.py` | Recursively converts numpy arrays, pandas DataFrames, and xtquant objects to JSON-safe dicts. Depth-limited to 64. |
 | **Auth** | `server/auth_limiter.py` + `common/protocol.py` | HMAC-SHA256 challenge-response (nonce + timestamp, 60s window). Rate limiter: 5 failures / 60s → 300s lockout per IP. |
-| **Logging** | `server/logging_config.py` | TimedRotatingFileHandler with daily rotation and console output (WARNING+). |
-| **Datetime Patch** | `server/datetime_patch.py` | Monkey-patches `datetime.fromtimestamp` on Python < 3.12 to prevent a CPython C assertion crash (`u < 1000000`) triggered by xtquant's float-precision timestamps. |
+| **Logging** | `server/logging_config.py` | TimedRotatingFileHandler with daily rotation (7-day retention) and console output (WARNING+). |
+| **Datetime Patch** | `server/datetime_patch.py` | Monkey-patches `datetime.fromtimestamp` on Python < 3.12 to prevent a CPython C assertion crash (`u < 1000000`) triggered by xtquant's float-precision timestamps. Auto-applies on import. |
+
+### Client Components
+
+| Component | File | Role |
+|---|---|---|
+| **QmtClient** | `client/client.py` | Main entry point. Handles connect, auth, surface init, RPC dispatch, event subscriptions, batch calls, and self-test. |
+| **Proxy** | `client/proxy.py` | Builds `_RemoteCallable`, `_RemoteModule`, `_RemoteTrader` from the API surface descriptor. Every `_RemoteCallable` exposes a `.batch()` method for batched xtdata calls. |
+| **DownloadTaskHandle** | `client/proxy.py` | Client-side handle for async download tasks — `poll()`, `is_done`, `wait(timeout)`. |
+| **Self-Test** | `client/self_test.py` | Comprehensive read-only query test suite with a declarative case registry covering 30+ xtdata functions and trader queries. |
+| **Exceptions** | `client/exceptions.py` | `QmtError`, `NotConnectedError`, `RemoteCallError`, `QmtAuthError`. |
 
 ### Heartbeat & Reconnect
 
@@ -182,17 +266,29 @@ server/              Windows-only — hosts xtquant, trader lifecycle, event bus
 - After `QMT_HEARTBEAT_MAX_FAILURES` consecutive failures, the ConnectionManager triggers auto-reconnect with exponential backoff (1s → 2s → 4s → 8s → 16s → 30s).
 - On successful reconnect: re-subscribes account, publishes a `reconnect` event, resets failure counters.
 
+### Trader Method Account Auto-Wrapping
+
+When a client calls a trader method that requires a `StockAccount` object, the server automatically converts the first argument (if it's a string) to a `StockAccount`. The client just passes `account_id` as a string. Methods requiring this wrapping: `order_stock`, `cancel_order_stock`, `cancel_order_stock_sysid`, `query_stock_asset`, `query_stock_order`, `query_stock_orders`, `query_stock_trades`, `query_stock_position`, `query_stock_positions`.
+
 ## Testing
 
 ```bash
-# Server-side tests (Windows only, requires venv + xtquant)
+# All server-side tests with mock (cross-platform, pure Python)
+python -m pytest tests/ -v
+
+# Skip live integration tests (requires real QMT)
+python -m pytest tests/ -v -k "not live"
+
+# Windows: full suite including live integration tests
 scripts\test_server.bat
 
-# Client-side tests (cross-platform, only needs rpyc)
+# Client-only tests (cross-platform, no xtquant needed)
 bash scripts/test.sh
 ```
 
-Tests use `tests/_xtquant_mock.py` — a pure-Python in-memory mock. No Windows or `.pyd` files needed.
+Tests use `tests/_xtquant_mock.py` — a pure-Python in-memory mock. No Windows or `.pyd` files needed for unit/integration tests.
+
+`tests/test_live_integration.py` exercises every xtdata query function against a real QMT backend — requires MiniQMT running and `.env` configured.
 
 ## Troubleshooting
 
@@ -203,3 +299,11 @@ Run the self-check tool to diagnose common issues:
 ```
 
 This verifies Python version, dependencies, MiniQMT running status, xtquant availability, and `.env` configuration. It auto-detects the running MiniQMT process and can wire xtquant and fill `.env` values automatically.
+
+For client-side diagnostics, use the built-in self-test:
+
+```python
+client = QmtClient.connect("server-ip", port=18812, auth_key="my-key")
+report = client.self_test()
+# Inspect failures: [r for r in report["results"] if r["status"] == "fail"]
+```

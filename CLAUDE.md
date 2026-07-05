@@ -24,14 +24,26 @@ REM or: python -m server.main
 ### Tests
 
 ```bash
-# Run all tests (pure Python mock, no xtquant/.pyd needed)
+# Run all unit + integration tests (pure Python mock, no xtquant/.pyd needed)
 python -m pytest tests/ -v
+
+# Skip live integration tests (requires real QMT running)
+python -m pytest tests/ -v -k "not live"
 
 # Run a single test file
 python -m pytest tests/test_service.py -v
 
 # Run a single test function
 python -m pytest tests/test_service.py::test_health -v
+
+# Run live integration tests only (requires real QMT + .env)
+python -m pytest tests/test_live_integration.py -v
+
+# Run client-only tests (cross-platform, no server deps)
+bash scripts/test.sh
+
+# Windows: full test suite
+scripts\test_server.bat
 ```
 
 ### Client packaging
@@ -49,6 +61,8 @@ pip install -e .
 | `scripts/setup.sh` | Client setup (Linux/macOS/WSL) |
 | `scripts/env_check.py` | Self-check: Python version, deps, MiniQMT process detection, xtquant import, .env validation. Auto-detects running MiniQMT (wires xtquant via junction, extracts account from window title, patches .env). Falls back to QMT_PATH from .env when MiniQMT is not running. |
 | `start-rpyc.bat` | Start server (validates .venv + .env, creates logs dir, runs `python -m server.main`) |
+| `scripts/test_server.bat` | Run full test suite on Windows (includes live integration tests) |
+| `scripts/test.sh` | Run client-side tests (cross-platform: protocol, exceptions, proxy, auth_limiter, datetime_patch, event_bus) |
 
 ## Architecture
 
@@ -100,6 +114,21 @@ Manages the xtquant trader lifecycle:
 
 `_RemoteModule` and `_RemoteTrader` build proxy objects from the API surface descriptor returned by `get_api_surface`. `_RemoteCallable.__call__` delegates to `QmtClient._call`, which routes to the correct RPyC endpoint and maps error responses to Python exceptions. Constants (e.g., `xtconstant.STOCK_BUY`) are inlined at connect time — zero RPC overhead for subsequent access.
 
+Every `_RemoteCallable` instance has a `.batch(calls)` method (bound via `types.MethodType`) for executing multiple calls to the same xtdata function in a single RPC round-trip. Batch is only available for xtdata functions, not trader methods.
+
+`DownloadTaskHandle` wraps async download tasks — provides `poll()`, `is_done` property, and `wait(timeout)`.
+
+### Client self-test (`client/self_test.py`)
+
+Declarative test case registry (`_SELF_TEST_CASES`) covering 30+ read-only query interfaces. Each case has:
+- `run(client, symbols)` — execute the query
+- `check(result)` → `(ok: bool, detail: str)` — validate the result
+- `skip_if(client, symbols)` → `(should_skip, reason)` — optional skip condition (e.g., no account configured)
+
+Categories: smoke (health, constants), instrument, tick, calendar, sector, index, dividend, option (including batch), futures, ETF, convertible bonds, financial, industry, market-data, download (return-type check), and trader queries.
+
+Called via `QmtClient.self_test(test_symbols=None, timeout=30.0)` — prints real-time ✓/✗/○ to stdout and returns a structured report dict.
+
 ### Serialization (`server/serializer.py`)
 
 Recursively converts numpy arrays, pandas DataFrames, and arbitrary xtquant objects to JSON-safe dicts. DataFrame uses `orient="split"`. Depth-limited to 64 to prevent infinite recursion.
@@ -119,10 +148,13 @@ Defined in `common/protocol.py` `EVENT_TYPES`: `order`, `trade`, `disconnect`, `
 - Server requires `numpy>=1.24,<2`, `pandas>=2.0,<3`, and `psutil>=5.0.0` (for MiniQMT process detection in `scripts/env_check.py`) pinned for xtquant compatibility
 - Tests use `tests/_xtquant_mock.py` — a pure-Python in-memory mock, no Windows or `.pyd` needed
 - `conftest.py` adds project root to `sys.path` for direct imports
+- `tests/test_live_integration.py` exercises every xtdata query function against a real QMT backend — requires MiniQMT running and `.env` configured; skipped with `-k "not live"`
 
 ## Trader method account auto-wrapping
 
-When a client calls a trader method that requires a `StockAccount` object, the server automatically converts the first argument (if it's a string) to a `StockAccount`. The client just passes `account_id` as a string. The list of methods requiring this wrapping is `_ACCOUNT_METHODS` in `connection.py`.
+When a client calls a trader method that requires a `StockAccount` object, the server automatically converts the first argument (if it's a string) to a `StockAccount`. The client just passes `account_id` as a string. The list of methods requiring this wrapping is `_ACCOUNT_METHODS` in `connection.py`:
+
+`order_stock`, `cancel_order_stock`, `cancel_order_stock_sysid`, `query_stock_asset`, `query_stock_order`, `query_stock_orders`, `query_stock_trades`, `query_stock_position`, `query_stock_positions`.
 
 ## Batch xtdata calls
 
@@ -144,3 +176,15 @@ results = client.xtdata.get_option_detail_data.batch([
 ])
 # results[i] = {"status": "ok", "data": ...} or {"status": "error", ...}
 ```
+
+## Client self-test
+
+`QmtClient.self_test()` exercises all read-only query interfaces against the connected server:
+
+```python
+client = QmtClient.connect("host", port=18812, auth_key="key")
+report = client.self_test()
+# report = {total, passed, failed, skipped, duration_seconds, results: [...]}
+```
+
+The test registry (`client/self_test.py`) is declarative — each case defines `run`, `check`, and optional `skip_if` callables. Tests auto-skip when prerequisites aren't met (no account, function missing from API surface, trader not connected).
