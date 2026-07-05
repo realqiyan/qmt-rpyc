@@ -1,10 +1,34 @@
 """Install xtquant from QMT directory into current venv.
 
 Usage: python scripts/install_xtquant.py <QMT_PATH>
-Writes a .pth file pointing at QMT's site-packages directory.
+
+Creates a directory junction (mklink /J) from the venv's site-packages/xtquant
+to QMT's xtquant directory.  This exposes ONLY xtquant — unlike the old .pth
+approach which added the entire QMT site-packages (including incompatible
+packages like pyreadline) to sys.path.
 """
 import sys
 import os
+import subprocess
+
+
+def _rm_junction(path):
+    """Remove a directory junction (or regular dir) if it exists."""
+    if os.path.isdir(path):
+        # rmdir works for both junctions and real directories on Windows
+        subprocess.run(
+            ["cmd.exe", "/c", "rmdir", path],
+            capture_output=True, shell=False,
+        )
+
+
+def _create_junction(src, dst):
+    """Create a directory junction: dst -> src.  src must exist."""
+    subprocess.run(
+        ["cmd.exe", "/c", "mklink", "/J", dst, src],
+        capture_output=True, shell=False, check=True,
+    )
+    print(f"Created junction: {dst} -> {src}")
 
 
 def main(qmt_path):
@@ -25,22 +49,29 @@ def main(qmt_path):
         print(f"        Expected structure: <QMT_PATH>\\..\\bin.x64\\Lib\\site-packages")
         sys.exit(1)
 
-    # --- verify xtquant modules exist ---
-    xtquant_marker = os.path.join(qmt_site, "xtquant")
-    xtdata_marker = os.path.join(qmt_site, "xtdata.py")
-    if not os.path.exists(xtquant_marker) and not os.path.exists(xtdata_marker):
-        print(f"[ERROR] xtquant modules not found under: {qmt_site}")
-        print(f"        Checked: xtquant/ and xtdata.py — neither exists.")
+    # --- verify xtquant directory exists ---
+    qmt_xtquant = os.path.join(qmt_site, "xtquant")
+    if not os.path.isdir(qmt_xtquant):
+        print(f"[ERROR] xtquant/ directory not found under: {qmt_site}")
         sys.exit(1)
 
-    # --- write .pth file ---
+    # --- determine target in venv site-packages ---
     venv_dir = os.path.dirname(os.path.dirname(sys.executable))
     site_packages = os.path.join(venv_dir, "Lib", "site-packages")
     os.makedirs(site_packages, exist_ok=True)
-    pth = os.path.join(site_packages, "qmt_xtquant.pth")
-    with open(pth, "w") as f:
-        f.write(qmt_site + "\n")
-    print(f"Wrote {pth} -> {qmt_site}")
+    venv_xtquant = os.path.join(site_packages, "xtquant")
+
+    # --- remove old .pth file (legacy wiring) ---
+    old_pth = os.path.join(site_packages, "qmt_xtquant.pth")
+    if os.path.isfile(old_pth):
+        os.remove(old_pth)
+        print(f"Removed legacy .pth file: {old_pth}")
+
+    # --- remove existing junction / directory ---
+    _rm_junction(venv_xtquant)
+
+    # --- create junction ---
+    _create_junction(qmt_xtquant, venv_xtquant)
 
 
 if __name__ == "__main__":

@@ -142,21 +142,58 @@ def _find_xtquant_in_dir(qmt_dir):
 
 
 def _configure_xtquant_path(xtquant_site):
-    """Create a .pth file in the venv so Python always finds xtquant."""
+    """Create a directory junction in the venv so Python finds xtquant.
+
+    Uses mklink /J (directory junction, no admin rights needed) to expose
+    ONLY the xtquant package — unlike the old .pth approach which added the
+    entire QMT site-packages (including incompatible packages) to sys.path.
+    """
+    import subprocess
+
     site_packages = os.path.join(sys.prefix, 'Lib', 'site-packages')
     os.makedirs(site_packages, exist_ok=True)
-    pth_file = os.path.join(site_packages, 'qmt_xtquant.pth')
 
+    # source: QMT's xtquant directory
+    qmt_xtquant = os.path.join(xtquant_site, 'xtquant')
+    # target: venv's site-packages/xtquant
+    venv_xtquant = os.path.join(site_packages, 'xtquant')
+
+    # ── remove legacy .pth file ──────────────────────────────────────
+    old_pth = os.path.join(site_packages, 'qmt_xtquant.pth')
+    if os.path.isfile(old_pth):
+        try:
+            os.remove(old_pth)
+            print(f"         Removed legacy .pth: {old_pth}")
+        except OSError:
+            pass
+
+    # ── remove existing junction / directory if present ──────────────
+    if os.path.isdir(venv_xtquant):
+        try:
+            subprocess.run(
+                ['cmd.exe', '/c', 'rmdir', venv_xtquant],
+                capture_output=True, shell=False,
+            )
+        except Exception:
+            pass
+
+    # ── create junction ──────────────────────────────────────────────
     try:
-        with open(pth_file, 'w', encoding='utf-8') as f:
-            f.write(f"{xtquant_site}\n")
-        print(f"         Configured xtquant via .pth → {xtquant_site}")
-    except OSError as e:
-        print(f"         [WARN] Could not write .pth file: {e}")
+        subprocess.run(
+            ['cmd.exe', '/c', 'mklink', '/J', venv_xtquant, qmt_xtquant],
+            capture_output=True, shell=False, check=True,
+        )
+        print(f"         Created junction: {venv_xtquant} -> {qmt_xtquant}")
+    except subprocess.CalledProcessError as e:
+        print(f"         [WARN] Could not create junction: {e}")
+        # fallback: still add to sys.path immediately
+        if xtquant_site not in sys.path:
+            sys.path.insert(0, xtquant_site)
+        return
 
-    # also make it available right now
-    if xtquant_site not in sys.path:
-        sys.path.insert(0, xtquant_site)
+    # also make it available right now (the junction dir)
+    if site_packages not in sys.path:
+        sys.path.insert(0, site_packages)
 
 
 # ---------------------------------------------------------------------------
