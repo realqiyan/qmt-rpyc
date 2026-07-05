@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 
 import rpyc
@@ -93,6 +94,23 @@ def _materialize(obj, _depth=0):
         if isinstance(obj, tuple):
             return tuple(_materialize(x, _depth + 1) for x in obj)
     return obj
+
+# ── batch call helpers ───────────────────────────────────────────────
+
+_BATCH_MAX_CALLS = 500
+_BATCH_MAX_WORKERS = int(os.environ.get("QMT_BATCH_MAX_WORKERS", "50"))
+
+
+def _execute_one(fn, args, kwargs):
+    """Execute a single xtdata call with materialization + serialization.
+
+    Standalone function (not a method) so ThreadPoolExecutor can pickle it.
+    Exceptions propagate to the caller — the batch loop catches them.
+    """
+    args = [_materialize(a) for a in args]
+    kwargs = {k: _materialize(v) for k, v in kwargs.items()}
+    raw = fn(*args, **kwargs)
+    return {"status": STATUS_OK, "data": serialize(raw)}
 
 try:
     from xtquant import xtdata
@@ -281,3 +299,75 @@ class XtquantService(rpyc.Service):
             return {"status": STATUS_ERROR, "error_type": "KeyError",
                     "error_message": f"task {task_id!r} not found"}
         return {"status": STATUS_OK, "data": task}
+
+    def exposed_batch_call_xtdata(self, name, calls):
+        self._require_authed()
+        try:
+            arg_str = f"fn={name}, calls={len(calls)}"
+        except Exception:
+            arg_str = "<summarize failed>"
+        self._log_request("batch_call_xtdata", arg_str)
+
+        # ── validation ──────────────────────────────────────────
+        if len(calls) > _BATCH_MAX_CALLS:
+            return {
+                "status": STATUS_ERROR,
+                "error_type": "BatchTooLarge",
+                "error_message": (
+                    f"max {_BATCH_MAX_CALLS} calls per batch, got {len(calls)}"
+                ),
+            }
+        if is_download_function(name):
+            return {
+                "status": STATUS_ERROR,
+                "error_type": "BatchRejected",
+                "error_message": (
+                    f"'{name}' is a download function; use call_xtdata"
+                ),
+            }
+        if xtdata is None:
+            return {
+                "status": STATUS_ERROR,
+                "error_type": "ImportError",
+                "error_message": "xtquant not available",
+            }
+
+        fn = getattr(xtdata, name, None)
+        if fn is None:
+            return {
+                "status": STATUS_ERROR,
+                "error_type": "AttributeError",
+                "error_message": f"xtdata has no attribute {name!r}",
+            }
+
+        # ── concurrent execution ─────────────────────────────────
+        max_workers = min(len(calls), _BATCH_MAX_WORKERS)
+        results = [None] * len(calls)
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {
+                ex.submit(_execute_one, fn, args, kwargs): i
+                for i, (args, kwargs) in enumerate(calls)
+            }
+            for f in as_completed(futures):
+                i = futures[f]
+                try:
+                    results[i] = f.result()
+                except Exception as e:
+                    results[i] = {
+                        "status": STATUS_ERROR,
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    }
+
+        # ── summary log ──────────────────────────────────────────
+        ok_count = sum(1 for r in results if r.get("status") == STATUS_OK)
+        err_count = len(results) - ok_count
+        self._log_request(
+            "batch_call_xtdata",
+            f"fn={name}, calls={len(calls)}, ok={ok_count}, err={err_count}",
+        )
+
+        return {"status": STATUS_OK, "results": results}
