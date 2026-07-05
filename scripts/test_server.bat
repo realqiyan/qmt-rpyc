@@ -7,7 +7,7 @@ REM Runs ALL tests including server-side tests that require
 REM numpy, pandas, and xtquant (QMT/MiniQMT).
 REM
 REM Prerequisites:
-REM   - .venv created (run scripts\setup_dev.bat first)
+REM   - .venv created (run scripts\setup.bat first)
 REM   - MiniQMT running for live integration tests
 REM
 REM Usage:
@@ -19,7 +19,7 @@ REM ============================================================
 cd /d "%~dp0\.."
 
 if not exist ".venv\Scripts\python.exe" (
-    echo [ERROR] .venv not found. Run scripts\setup_dev.bat first.
+    echo [ERROR] .venv not found. Run scripts\setup.bat first.
     exit /b 1
 )
 

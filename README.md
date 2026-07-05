@@ -65,13 +65,13 @@ with QmtClient.connect("192.168.1.100", port=18812, auth_key="my-key") as client
 client.close()
 ```
 
-### Dev Environment (Windows)
+### Client Package (cross-platform)
 
-```bat
-scripts\setup_dev.bat
+```bash
+pip install -e .
 ```
 
-This installs pytest and the client package in editable mode on top of `scripts\setup.bat`.
+The client package only needs `rpyc>=6.0.0` and works on any platform.
 
 ## Configuration (.env)
 
@@ -199,7 +199,7 @@ Tests use `tests/_xtquant_mock.py` — a pure-Python in-memory mock. No Windows 
 Run the self-check tool to diagnose common issues:
 
 ```bat
-.venv\Scripts\python.exe env_check.py
+.venv\Scripts\python.exe scripts\env_check.py
 ```
 
 This verifies Python version, dependencies, MiniQMT running status, xtquant availability, and `.env` configuration. It auto-detects the running MiniQMT process and can wire xtquant and fill `.env` values automatically.

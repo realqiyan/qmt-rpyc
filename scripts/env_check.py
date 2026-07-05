@@ -2,8 +2,11 @@
 Environment self-check for qmt-rpyc server.
 
 Verifies Python version, core dependencies, .env config, MiniQMT running status,
-and xtquant availability.  Auto-wires xtquant from the running QMT installation
-into the venv when possible.
+and xtquant availability.  Auto-wires xtquant from the running QMT installation into the venv when
+possible.  Falls back to QMT_PATH from .env when MiniQMT is not running.
+
+Called by scripts/setup.bat after venv creation and dependency install.
+Also usable standalone for diagnostics.
 
 Critical failures exit non-zero.  MiniQMT not running is a warning, not fatal.
 """
@@ -321,9 +324,10 @@ def main() -> int:
     print()
     print("xtquant module:")
 
-    # if MiniQMT is running, try to auto-wire xtquant from its install dir
     xtquant_ok = False
+
     if miniqmt_running:
+        # auto-wire from running MiniQMT process
         xtquant_site = _find_xtquant_in_dir(miniqmt['install_dir'])
         if xtquant_site:
             _configure_xtquant_path(xtquant_site)
@@ -336,6 +340,27 @@ def main() -> int:
                     _configure_xtquant_path(xtquant_site)
             if not xtquant_site:
                 print("         [WARN] xtquant not found inside MiniQMT install directory.")
+    else:
+        # offline fallback: try QMT_PATH from .env
+        try:
+            from dotenv import dotenv_values
+            cfg = dotenv_values(".env")
+            qmt_path = cfg.get("QMT_PATH", "")
+        except Exception:
+            qmt_path = ""
+
+        if qmt_path and qmt_path not in _PLACEHOLDER_VALUES:
+            qmt_site = os.path.abspath(
+                os.path.join(qmt_path, "..", "bin.x64", "Lib", "site-packages")
+            )
+            if os.path.isdir(os.path.join(qmt_site, "xtquant")):
+                _configure_xtquant_path(qmt_site)
+            else:
+                print(f"         [WARN] xtquant not found at computed path: {qmt_site}")
+                print(f"                (QMT_PATH={qmt_path})")
+        else:
+            print("         MiniQMT not running and no valid QMT_PATH in .env.")
+            print("         Start MiniQMT or set QMT_PATH in .env, then re-run.")
 
     try:
         import xtquant  # noqa: F401
@@ -343,8 +368,8 @@ def main() -> int:
         xtquant_ok = True
     except ImportError:
         _check("xtquant importable", False,
-               "xtquant not on Python path. Run scripts\\setup.bat to wire it, "
-               "or start MiniQMT and re-run this script.",
+               "xtquant not on Python path. Start MiniQMT or set QMT_PATH in .env, "
+               "then re-run this script.",
                fatal=False)
 
     # ---- 5. Auto-extract QMT_PATH & account from running MiniQMT -----------

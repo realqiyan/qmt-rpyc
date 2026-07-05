@@ -15,7 +15,6 @@ REM One-click server setup (venv + deps + xtquant wiring + .env)
 scripts\setup.bat
 
 REM Dev setup (adds pytest + client in editable mode)
-scripts\setup_dev.bat
 
 REM Start the server
 start-rpyc.bat
@@ -46,12 +45,9 @@ pip install -e .
 
 | Script | Purpose |
 |---|---|
-| `scripts/setup.bat` | Full server setup (venv + deps + xtquant wiring + .env) |
-| `scripts/setup_dev.bat` | Dev setup (setup.bat + pytest + client editable install) |
+| `scripts/setup.bat` | Single entry point: check Python → create venv → install deps → run scripts/env_check.py (auto-wires xtquant, configures .env) |
 | `scripts/setup.sh` | Client setup (Linux/macOS/WSL) |
-| `scripts/install_xtquant.py` | Wires xtquant from QMT install into venv via `.pth` file |
-| `env_check.py` | Self-check: Python version, deps, MiniQMT process detection, xtquant import, .env validation. Auto-detects running MiniQMT, wires xtquant, and patches .env with detected values. |
-| `init_env.bat` | Standalone venv init (create venv → install deps → run env_check). Lighter than setup.bat; skips xtquant wiring and .env creation. |
+| `scripts/env_check.py` | Self-check: Python version, deps, MiniQMT process detection, xtquant import, .env validation. Auto-detects running MiniQMT (wires xtquant via junction, extracts account from window title, patches .env). Falls back to QMT_PATH from .env when MiniQMT is not running. |
 | `start-rpyc.bat` | Start server (validates .venv + .env, creates logs dir, runs `python -m server.main`) |
 
 ## Architecture
@@ -120,7 +116,7 @@ Defined in `common/protocol.py` `EVENT_TYPES`: `order`, `trade`, `disconnect`, `
 
 - **Python 3.10 or 3.11** on the server — xtquant ships `.pyd` extensions for cp36–cp311 only (no cp312+)
 - Client has no such restriction — only needs `rpyc>=6.0.0`
-- Server requires `numpy>=1.24,<2`, `pandas>=2.0,<3`, and `psutil>=5.0.0` (for MiniQMT process detection in `env_check.py`) pinned for xtquant compatibility
+- Server requires `numpy>=1.24,<2`, `pandas>=2.0,<3`, and `psutil>=5.0.0` (for MiniQMT process detection in `scripts/env_check.py`) pinned for xtquant compatibility
 - Tests use `tests/_xtquant_mock.py` — a pure-Python in-memory mock, no Windows or `.pyd` needed
 - `conftest.py` adds project root to `sys.path` for direct imports
 

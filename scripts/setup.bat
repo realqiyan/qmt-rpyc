@@ -9,7 +9,7 @@ echo.
 cd /d "%~dp0\.."
 
 REM --- 1. check Python version -------------------------------------------------
-echo [1/5] Checking Python version...
+echo [1/4] Checking Python version...
 
 set PYTHON_EXE=
 set PYTHON_VER=
@@ -69,7 +69,7 @@ if !_VER_GAP! GTR 0 (
 
 REM --- 2. create venv ----------------------------------------------------------
 echo.
-echo [2/5] Creating virtual environment (.venv)...
+echo [2/4] Creating virtual environment (.venv)...
 
 if exist ".venv\Scripts\python.exe" (
     echo         .venv already exists, skipping.
@@ -85,9 +85,9 @@ if exist ".venv\Scripts\python.exe" (
 
 set VENV_PYTHON=%CD%\.venv\Scripts\python.exe
 
-REM --- 3. install dependencies ------------------------------------------------
+REM --- 3. install dependencies -------------------------------------------------
 echo.
-echo [3/5] Installing server dependencies...
+echo [3/4] Installing server dependencies...
 
 %VENV_PYTHON% -m pip install --upgrade pip -q
 %VENV_PYTHON% -m pip install -r requirements-server.txt -q
@@ -98,67 +98,18 @@ if %errorlevel% neq 0 (
 )
 echo         Done.
 
-REM --- 4. wire xtquant ---------------------------------------------------------
+REM --- 4. environment self-check (auto-wires xtquant, configures .env) ---------
 echo.
-echo [4/5] Wiring xtquant from QMT install...
+echo [4/4] Environment self-check (env_check.py)...
 
-REM try QMT_PATH from .env first, validate, ask if needed
-set QMT_PATH=
-if exist ".env" (
-    for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
-        if "%%a"=="QMT_PATH" set QMT_PATH=%%b
-    )
-)
-
-:prompt_qmt_path
-REM validate the path: does QMT's xtquant actually exist there?
-set QMT_VALID=0
-if not "!QMT_PATH!"=="" (
-    set "QMT_SITE=!QMT_PATH!\..\bin.x64\Lib\site-packages"
-    if exist "!QMT_SITE!\xtquant\" set QMT_VALID=1
-    if exist "!QMT_SITE!\xtdata.py" set QMT_VALID=1
-)
-
-if "!QMT_VALID!"=="1" goto :qmt_path_ok
-
-REM path is missing or invalid — prompt user
-echo.
-if "!QMT_PATH!"=="" (
-    echo         Enter your QMT/MiniQMT userdata directory path.
+%VENV_PYTHON% scripts\env_check.py
+if %errorlevel% neq 0 (
+    echo.
+    echo [WARN]  Some checks did not pass. See details above.
+    echo         The venv and dependencies are ready — fix the issues above and re-run.
 ) else (
-    echo [WARN]  xtquant not found at !QMT_PATH!
-    echo         Enter the correct QMT/MiniQMT userdata directory path.
-)
-echo         Example: D:\ACT\userdata_mini
-echo.
-set /p QMT_PATH="         QMT_PATH = "
-if "!QMT_PATH!"=="" (
-    echo [WARN]  No path entered, skipping xtquant wiring.
-    goto :skip_xtquant
-)
-goto :prompt_qmt_path
-
-:qmt_path_ok
-echo         QMT_PATH = !QMT_PATH!
-%VENV_PYTHON% scripts\install_xtquant.py "!QMT_PATH!"
-if !errorlevel! neq 0 (
-    echo [ERROR] xtquant wiring failed.
-) else (
-    echo         Done.
-)
-
-:skip_xtquant
-REM nothing to do here
-
-REM --- 5. create .env ---------------------------------------------------------
-echo.
-echo [5/5] Preparing .env configuration...
-
-if not exist ".env" (
-    copy .env.example .env >nul
-    echo         Created .env from .env.example — edit it with your real values.
-) else (
-    echo         .env already exists, skipping.
+    echo.
+    echo All checks passed.
 )
 
 REM --- done -------------------------------------------------------------------
@@ -167,10 +118,10 @@ echo ============================================================
 echo  Setup complete.
 echo.
 echo  Next steps:
-echo    1. Edit .env with your real values
+echo    1. If MiniQMT was not running: edit .env with your real values
 echo       notepad .env
 echo    2. Start the server
-echo       start_server.bat
+echo       start-rpyc.bat
 echo ============================================================
 
 endlocal
