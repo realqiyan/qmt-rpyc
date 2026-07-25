@@ -11,7 +11,6 @@ qmt-rpyc is an RPyC bridge that exposes the xtquant SDK for QMT/MiniQMT to remot
 - `common/`: protocol constants and HMAC helpers shared by client and server.
 - `tests/`: pytest unit and integration tests. `_xtquant_mock.py` supplies a portable in-memory xtquant replacement.
 - `scripts/`: environment setup, validation, testing, and benchmarking tools.
-- `docs/superpowers/`: feature designs and implementation plans.
 
 ## Setup, Run, and Test Commands
 
