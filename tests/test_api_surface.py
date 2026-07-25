@@ -46,6 +46,13 @@ class TestBuildApiSurface:
         assert "connect" in methods
         assert "query_stock_asset" in methods
 
+    def test_dynamic_trader_method_keeps_existing_metadata_shape(self):
+        from server.api_surface import build_api_surface
+        surface = build_api_surface()
+        meta = surface["XtQuantTrader"]["methods"][
+            "query_new_purchase_limit"]
+        assert set(meta) == {"signature", "doc"}
+
     def test_xtconstant_has_values(self):
         from server.api_surface import build_api_surface
         surface = build_api_surface()

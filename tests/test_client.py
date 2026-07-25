@@ -79,6 +79,18 @@ class TestQmtClientCall:
             order_id = client.trader.order_stock("ACC1", "600000.SH", 23, 100, 5, 10.0)
             assert isinstance(order_id, int)
 
+    def test_call_dynamically_adapted_trader_method(self, mock_server):
+        from client import QmtClient
+        with QmtClient.connect("127.0.0.1", port=18899) as client:
+            assert "query_new_purchase_limit" in (
+                client._surface["XtQuantTrader"]["methods"])
+            result = client.trader.query_new_purchase_limit("ACC1")
+            assert result["account_id"] == "ACC1"
+            assert result["limit"] == 10000
+            keyword_result = client.trader.query_new_purchase_limit(
+                account="ACC2")
+            assert keyword_result["account_id"] == "ACC2"
+
     def test_xtconstant_inline(self, mock_server):
         from client import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:

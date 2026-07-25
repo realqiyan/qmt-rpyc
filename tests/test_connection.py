@@ -22,6 +22,16 @@ def mock_xtquant():
 
 
 class TestConnectionManager:
+    def test_discovers_runtime_account_parameter(self, mock_xtquant):
+        from server.connection import _discover_account_parameters
+        from xtquant.xttrader import XtQuantTrader
+
+        discovered = _discover_account_parameters(XtQuantTrader)
+
+        assert discovered["query_new_purchase_limit"].name == "account"
+        assert discovered["query_new_purchase_limit"].position == 0
+        assert "echo_account_id" not in discovered
+
     def test_init_and_connect(self, mock_xtquant):
         from server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
@@ -87,4 +97,79 @@ class TestConnectionManager:
         result = cm.call_trader_method("query_stock_asset", ["ACC1"], {})
         assert result["status"] == "ok"
         assert result["data"]["account_id"] == "ACC1"
+        cm.stop()
+
+    def test_legacy_account_wrapping_fallback(
+            self, mock_xtquant, monkeypatch):
+        import server.connection as connection
+        monkeypatch.setattr(
+            connection, "_discover_account_parameters", lambda trader_cls: {})
+        cm = connection.ConnectionManager(
+            path="test", session_id=1, account_id="ACC1")
+        cm._init_trader()
+        result = cm.call_trader_method(
+            "query_stock_asset", ["ACC1"], {})
+        assert result["status"] == "ok"
+        assert result["data"]["account_id"] == "ACC1"
+        cm.stop()
+
+    def test_discovered_account_wrapping_positional(self, mock_xtquant):
+        from server.connection import ConnectionManager
+        cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
+        cm._init_trader()
+        result = cm.call_trader_method(
+            "query_new_purchase_limit", ["ACC1"], {})
+        assert result["status"] == "ok"
+        assert result["data"]["account_id"] == "ACC1"
+        cm.stop()
+
+    def test_discovered_account_wrapping_keyword(self, mock_xtquant):
+        from server.connection import ConnectionManager
+        cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
+        cm._init_trader()
+        result = cm.call_trader_method(
+            "query_new_purchase_limit", [], {"account": "ACC1"})
+        assert result["status"] == "ok"
+        assert result["data"]["account_id"] == "ACC1"
+        cm.stop()
+
+    def test_stock_account_passes_through(self, mock_xtquant):
+        from server.connection import ConnectionManager
+        from xtquant.xttype import StockAccount
+        cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
+        cm._init_trader()
+        account = StockAccount("ACC2")
+        result = cm.call_trader_method(
+            "query_new_purchase_limit", [account], {})
+        assert result["status"] == "ok"
+        assert result["data"]["account_id"] == "ACC2"
+        cm.stop()
+
+    def test_account_id_parameter_is_not_wrapped(self, mock_xtquant):
+        from server.connection import ConnectionManager
+        cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
+        cm._init_trader()
+        result = cm.call_trader_method(
+            "echo_account_id", [], {"account_id": "ACC1"})
+        assert result == {"status": "ok", "data": "ACC1"}
+        cm.stop()
+
+    def test_account_construction_failure_is_structured(
+            self, mock_xtquant, monkeypatch):
+        from tests import _xtquant_mock
+        from server.connection import ConnectionManager
+
+        class BrokenStockAccount:
+            def __init__(self, account_id):
+                raise ValueError("invalid account")
+
+        cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
+        cm._init_trader()
+        monkeypatch.setattr(
+            _xtquant_mock, "StockAccount", BrokenStockAccount)
+        result = cm.call_trader_method(
+            "query_new_purchase_limit", ["ACC1"], {})
+        assert result["status"] == "error"
+        assert result["error_type"] == "ValueError"
+        assert result["error_message"] == "invalid account"
         cm.stop()

@@ -118,5 +118,14 @@ class XtQuantTrader:
         return [XtOrder(account_id=account.account_id, order_id=oid, **info)
                 for oid, info in self._orders.items()]
 
+    def query_new_purchase_limit(self, account):
+        return {
+            "account_id": account.account_id,
+            "limit": 10000,
+        }
+
+    def echo_account_id(self, account_id):
+        return account_id
+
     def query_account_status(self, account):
         return {"account_id": account.account_id, "status": "ok"}

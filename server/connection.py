@@ -1,6 +1,8 @@
+import inspect
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -23,6 +25,46 @@ _ACCOUNT_METHODS = {
     "query_stock_asset", "query_stock_order", "query_stock_orders",
     "query_stock_trades", "query_stock_position", "query_stock_positions",
 }
+
+
+@dataclass(frozen=True)
+class _AccountParameter:
+    name: str
+    position: Optional[int]
+
+
+def _discover_account_parameters(trader_cls):
+    """Return public Trader methods whose exact parameter name is account."""
+    discovered = {}
+    for name in dir(trader_cls):
+        if name.startswith("_"):
+            continue
+        method = getattr(trader_cls, name, None)
+        if not callable(method):
+            continue
+        try:
+            parameters = inspect.signature(method).parameters.values()
+        except (TypeError, ValueError) as e:
+            logger.debug("Cannot inspect Trader method %s: %s", name, e)
+            continue
+
+        position = 0
+        for parameter in parameters:
+            if parameter.name in ("self", "cls"):
+                continue
+            if parameter.name == "account":
+                if parameter.kind == inspect.Parameter.KEYWORD_ONLY:
+                    discovered[name] = _AccountParameter("account", None)
+                elif parameter.kind in (
+                        inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD):
+                    discovered[name] = _AccountParameter("account", position)
+                break
+            if parameter.kind in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD):
+                position += 1
+    return discovered
 
 
 class _Callback:
@@ -169,6 +211,10 @@ class ConnectionManager:
         self._heartbeat_failures = 0
         self._start_time = time.time()
         self._last_heartbeat = None
+        self._account_parameters = {
+            name: _AccountParameter("account", 0)
+            for name in _ACCOUNT_METHODS
+        }
 
     # ── public entry points ────────────────────────────────────────
 
@@ -211,6 +257,17 @@ class ConnectionManager:
             try:
                 from xtquant.xttrader import XtQuantTrader
                 self._trader = XtQuantTrader(self._path, self._session_id)
+                discovered = _discover_account_parameters(type(self._trader))
+                self._account_parameters = {
+                    name: _AccountParameter("account", 0)
+                    for name in _ACCOUNT_METHODS
+                }
+                self._account_parameters.update(discovered)
+                logger.info(
+                    "Discovered %d Trader methods requiring "
+                    "StockAccount adaptation",
+                    len(discovered),
+                )
                 self._callback = _Callback(self)
                 self._trader.register_callback(self._callback)
                 self._trader.start()
@@ -439,14 +496,29 @@ class ConnectionManager:
 
     # ── trader method dispatch ─────────────────────────────────────
 
-    def _wrap_account_if_needed(self, name, args):
-        if name in _ACCOUNT_METHODS and args and isinstance(args[0], str):
-            try:
-                from xtquant.xttype import StockAccount
-                return (StockAccount(args[0]),) + tuple(args[1:])
-            except ImportError:
-                pass
-        return args
+    def _wrap_account_if_needed(self, name, args, kwargs):
+        parameter = self._account_parameters.get(name)
+        if parameter is None:
+            return args, kwargs
+
+        if (parameter.position is not None
+                and len(args) > parameter.position
+                and isinstance(args[parameter.position], str)):
+            from xtquant.xttype import StockAccount
+            adapted_args = list(args)
+            adapted_args[parameter.position] = StockAccount(
+                args[parameter.position])
+            return adapted_args, kwargs
+
+        if (parameter.name in kwargs
+                and isinstance(kwargs[parameter.name], str)):
+            from xtquant.xttype import StockAccount
+            adapted_kwargs = dict(kwargs)
+            adapted_kwargs[parameter.name] = StockAccount(
+                kwargs[parameter.name])
+            return args, adapted_kwargs
+
+        return args, kwargs
 
     def call_trader_method(self, name, args, kwargs):
         with self._trader_lock:
@@ -457,8 +529,9 @@ class ConnectionManager:
             if method is None:
                 return {"status": STATUS_ERROR, "error_type": "AttributeError",
                         "error_message": f"trader has no method {name!r}"}
-            args = self._wrap_account_if_needed(name, args)
             try:
+                args, kwargs = self._wrap_account_if_needed(
+                    name, args, kwargs)
                 result = method(*args, **kwargs)
                 return {"status": STATUS_OK, "data": serialize(result)}
             except Exception as e:

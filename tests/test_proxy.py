@@ -64,6 +64,18 @@ class TestRemoteTrader:
         assert hasattr(trader, "connect")
         assert isinstance(trader.order_stock, _RemoteCallable)
 
+    def test_unknown_public_method_uses_fallback(self):
+        client = FakeClient()
+        trader = _RemoteTrader(client, {"methods": {}})
+        result = trader.version_specific_method("ACC1")
+        assert result == {"result": "trader.version_specific_method"}
+
+    def test_private_method_is_rejected(self):
+        client = FakeClient()
+        trader = _RemoteTrader(client, {"methods": {}})
+        with pytest.raises(AttributeError):
+            getattr(trader, "_private_method")
+
 
 class TestDownloadTaskHandle:
     def test_task_id(self):
