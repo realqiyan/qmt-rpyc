@@ -283,7 +283,16 @@ server/              Windows-only — hosts xtquant, trader lifecycle, event bus
 
 ### Trader Method Account Auto-Wrapping
 
-When a client calls a trader method that requires a `StockAccount` object, the server automatically converts the first argument (if it's a string) to a `StockAccount`. The client just passes `account_id` as a string. Methods requiring this wrapping: `order_stock`, `cancel_order_stock`, `cancel_order_stock_sysid`, `query_stock_asset`, `query_stock_order`, `query_stock_orders`, `query_stock_trades`, `query_stock_position`, `query_stock_positions`.
+When a client calls a trader method whose runtime signature has an exact `account` parameter, the server automatically converts an account ID string to `StockAccount`. Positional and keyword forms are both supported:
+
+```python
+client.trader.query_stock_asset("1000000365")
+client.trader.query_stock_asset(account="1000000365")
+```
+
+The server discovers these methods from the installed broker-customized xtquant build. The original nine-method `_ACCOUNT_METHODS` set remains a compatibility fallback when a future SDK build does not expose inspectable signatures. The client remains xtquant-free and never constructs `StockAccount`.
+
+API discovery only means that a method is available for remote dispatch. Trader methods that accept callback arguments require separate live validation of callback lifetime and reverse RPyC transport.
 
 ## Testing
 

@@ -60,11 +60,11 @@ Important helpers:
 
 `server/service.py` exposes authentication, API discovery, xtdata/trader dispatch, batch calls, event polling, download status, and health checks. Before invoking pybind11-backed xtquant functions, remote RPyC netrefs must be materialized into local Python objects. Responses are converted by `server/serializer.py`; numpy arrays, pandas DataFrames, and xtquant objects become JSON-safe structures, with recursion limited to 64 levels.
 
-`server/connection.py` owns trader initialization, heartbeat checks, callback forwarding, and exponential-backoff reconnection. Trader methods listed in `_ACCOUNT_METHODS` accept an account ID string from the client; the server wraps it as `StockAccount`. The shared `EventBus` provides bounded per-subscription queues, while `DownloadTaskManager` runs `download_*` work asynchronously.
+`server/connection.py` owns trader initialization, heartbeat checks, callback forwarding, and exponential-backoff reconnection. At runtime it discovers Trader methods with an exact `account` parameter and converts positional or keyword account ID strings into `StockAccount`; `_ACCOUNT_METHODS` remains a compatibility fallback when SDK signatures are unavailable. The shared `EventBus` provides bounded per-subscription queues, while `DownloadTaskManager` runs `download_*` work asynchronously.
 
 The client receives the discovered API surface at connection time. `client/proxy.py` builds xtdata and trader proxies dynamically, inlines constants to avoid extra RPCs, maps remote errors to client exceptions, and represents downloads with `DownloadTaskHandle`.
 
-Batching is supported only for xtdata calls to the same function. The deployed xtdata SDK must be treated as non-thread-safe, so batch calls may reduce RPC round-trips but must enter xtdata serially. The server rejects `download_*` batch calls, caps batches at 500 entries, and keeps per-call failures isolated in the result list.
+Batching is supported only for xtdata calls to the same function. The project intentionally retains the existing bounded concurrent batch implementation; do not introduce process-wide xtdata serialization as part of bug fixes unless this decision is explicitly revisited. The server rejects `download_*` batch calls, caps batches at 500 entries, and keeps per-call failures isolated in the result list.
 
 ## Runtime Constraints and Configuration
 
@@ -73,6 +73,7 @@ Batching is supported only for xtdata calls to the same function. The deployed x
 - Server compatibility pins include `numpy>=1.24,<2` and `pandas>=2,<3`.
 - The deployed xtquant SDK is a broker-customized offline build and may differ from public xtquant releases and documentation. Treat the API surface discovered from the actual Windows deployment as the source of truth for supported functions and signatures.
 - The server is intended to expose the complete API surface available from that deployed xtquant build.
+- API discovery does not by itself guarantee transport compatibility. Trader methods that accept callbacks require separate live validation because the client does not run an explicit RPyC background-serving thread.
 - Production deployment is confined to a trusted internal LAN. It currently authenticates clients with the shared `QMT_RPYC_AUTH_KEY`; TLS and mTLS certificates are not deployed.
 - Each server instance is dedicated to one person's QMT deployment and securities account environment, with one Trader shared by all connected clients.
 - Possession of `QMT_RPYC_AUTH_KEY` grants full trust within that server instance: clients may call every exposed API, control the shared Trader, and access all account and event data available to the instance. Per-client authorization and multi-tenant isolation are out of scope.
