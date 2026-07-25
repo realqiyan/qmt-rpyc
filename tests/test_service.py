@@ -138,6 +138,19 @@ class TestEvents:
         assert dropped == 0
         service.exposed_unsubscribe_event(sub_id)
 
+    def test_subscription_is_owned_by_service_instance(self, service):
+        from server.service import XtquantService
+
+        sub_id = service.exposed_subscribe_event(["reconnect"])
+        other = XtquantService()
+        assert other.exposed_poll_events(sub_id) == ([], 0)
+        assert other.exposed_unsubscribe_event(sub_id) is False
+        assert service.exposed_unsubscribe_event(sub_id) is True
+
+    def test_invalid_event_type_is_rejected(self, service):
+        with pytest.raises(ValueError):
+            service.exposed_subscribe_event(["unknown"])
+
 
 class TestAuth:
     def test_auth_required_blocks(self, mock_xtquant):
@@ -178,11 +191,12 @@ class TestAuth:
         svc = XtquantService()
         svc._peer = ("127.0.0.1", 12345)
 
-        nonce = "testnonce1234567890"
+        nonce = "0123456789abcdef"
         ts = int(time.time())
         token = make_auth_token(key, nonce, ts)
         assert svc.exposed_authenticate(nonce, ts, token) is True
         assert svc.exposed_get_api_surface() is not None
+        assert svc.exposed_authenticate(nonce, ts, token) is False
         dm.shutdown()
 
 
@@ -252,3 +266,21 @@ class TestBatchCallXtdata:
             "get_instrument_detail", [])
         assert result["status"] == "ok"
         assert result["results"] == []
+
+    def test_batch_malformed_json_is_structured_error(self, service):
+        result = service.exposed_batch_call_xtdata(
+            "get_instrument_detail", "{bad")
+        assert result["status"] == "error"
+        assert result["error_type"] == "InvalidBatch"
+
+    @pytest.mark.parametrize("calls", [
+        {},
+        [["not-paired"]],
+        [[{}, {}]],
+        [[[], []]],
+    ])
+    def test_batch_invalid_shape_is_structured_error(self, service, calls):
+        result = service.exposed_batch_call_xtdata(
+            "get_instrument_detail", calls)
+        assert result["status"] == "error"
+        assert result["error_type"] == "TypeError"

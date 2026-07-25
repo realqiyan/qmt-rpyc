@@ -61,8 +61,12 @@ class TestQmtClientConnect:
 
     def test_context_manager(self, mock_server):
         from client import QmtClient
+        from client.exceptions import NotConnectedError
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             assert client is not None
+        with pytest.raises(NotConnectedError):
+            client.health()
+        client.close()
 
 
 class TestQmtClientCall:

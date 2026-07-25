@@ -2,6 +2,8 @@ import time
 import logging
 import types
 
+import rpyc
+
 from client.exceptions import _map_error
 
 logger = logging.getLogger(__name__)
@@ -91,7 +93,9 @@ class DownloadTaskHandle:
         self.task_id = task_id
 
     def poll(self):
-        resp = self._client._conn.root.query_download(self.task_id)
+        conn = self._client._ensure_connected()
+        resp = rpyc.classic.obtain(
+            conn.root.query_download(self.task_id))
         if resp["status"] == "ok":
             return resp["data"]
         raise _map_error(resp)
@@ -102,12 +106,18 @@ class DownloadTaskHandle:
         return task["status"] in ("completed", "failed")
 
     def wait(self, timeout=300, poll_interval=1.0):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than 0")
+        if poll_interval <= 0:
+            raise ValueError("poll_interval must be greater than 0")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             task = self.poll()
             if task["status"] in ("completed", "failed"):
                 return task
-            time.sleep(poll_interval)
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(poll_interval, remaining))
         raise TimeoutError(f"download {self.task_id} not done in {timeout}s")
 
     def __repr__(self):

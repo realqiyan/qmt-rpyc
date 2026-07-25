@@ -33,6 +33,16 @@ class TestAuthProtocol:
         token = make_auth_token(key, "original-nonce", ts)
         assert verify_auth_token(key, "tampered-nonce", ts, token) is False
 
+    @pytest.mark.parametrize("nonce,timestamp,token", [
+        ("short", 1, "0" * 64),
+        ("abcdef1234567890", "1", "0" * 64),
+        ("abcdef1234567890", 1, "short"),
+    ])
+    def test_invalid_auth_fields_are_rejected(
+            self, nonce, timestamp, token):
+        assert verify_auth_token(
+            "secret-key", nonce, timestamp, token) is False
+
 
 class TestConstants:
     def test_status_constants(self):
@@ -43,3 +53,4 @@ class TestConstants:
         assert "order" in EVENT_TYPES
         assert EVENT_TYPES["order"] == "on_stock_order"
         assert EVENT_TYPES["disconnect"] == "on_disconnected"
+        assert "reconnect" in EVENT_TYPES

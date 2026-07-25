@@ -8,7 +8,7 @@ import rpyc
 
 from common.protocol import make_auth_token
 from client.proxy import _RemoteModule, _RemoteTrader, DownloadTaskHandle
-from client.exceptions import QmtAuthError, _map_error
+from client.exceptions import NotConnectedError, QmtAuthError, _map_error
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +29,48 @@ class _EventPoller:
         self._thread.start()
 
     def stop(self):
-        self._stop.set()
+        self.request_stop()
         if self._thread:
             self._thread.join(timeout=2)
 
+    def request_stop(self):
+        self._stop.set()
+
     def _loop(self):
-        while not self._stop.wait(self._interval):
+        delay = self._interval
+        failures = 0
+        while not self._stop.wait(delay):
             try:
-                events, dropped = self._conn.root.poll_events(self._sub_id, 100)
+                events, dropped = rpyc.classic.obtain(
+                    self._conn.root.poll_events(self._sub_id, 100))
+                failures = 0
+                delay = self._interval
                 if dropped > 0:
                     logger.warning("Event subscription %s dropped %d events",
                                    self._sub_id, dropped)
                 if self._on_event:
                     for event in events:
-                        self._on_event(event)
-            except Exception as e:
-                logger.error("Event poll failed: %s", e)
+                        try:
+                            self._on_event(event)
+                        except Exception:
+                            logger.exception(
+                                "Event callback failed for subscription %s",
+                                self._sub_id,
+                            )
+            except Exception:
+                if self._stop.is_set():
+                    return
+                failures += 1
+                delay = min(
+                    max(self._interval, 0.1) * (2 ** min(failures, 8)),
+                    30.0,
+                )
+                logger.warning(
+                    "Event poll failed for subscription %s; retrying in %.1fs",
+                    self._sub_id,
+                    delay,
+                    exc_info=True,
+                )
 
 
 class QmtClient:
@@ -55,6 +81,7 @@ class QmtClient:
         self._trader = None
         self._xtconstant = None
         self._pollers = {}
+        self._closed = False
 
     @classmethod
     def connect(cls, host, port=18812, auth_key=None,
@@ -75,11 +102,21 @@ class QmtClient:
                     keyfile=tls_config.get("keyfile"))
 
         conn = rpyc.connect(host, port, config=config)
-        client = cls()
-        client._conn = conn
-        client._authenticate(auth_key)
-        client._init_surface()
-        return client
+        try:
+            client = cls()
+            client._conn = conn
+            client._authenticate(auth_key)
+            client._init_surface()
+            return client
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                logger.warning(
+                    "Failed to close RPyC connection after connect error",
+                    exc_info=True,
+                )
+            raise
 
     def _authenticate(self, auth_key):
         if auth_key is None:
@@ -89,7 +126,6 @@ class QmtClient:
         token = make_auth_token(auth_key, nonce, timestamp)
         ok = self._conn.root.authenticate(nonce, timestamp, token)
         if not ok:
-            self._conn.close()
             raise QmtAuthError("Auth", "authentication failed")
 
     def _init_surface(self):
@@ -111,10 +147,11 @@ class QmtClient:
         return self._xtconstant
 
     def _call(self, surface, name, args, kwargs):
+        conn = self._ensure_connected()
         if surface == "xtdata":
-            resp = self._conn.root.call_xtdata(name, list(args), dict(kwargs))
+            resp = conn.root.call_xtdata(name, list(args), dict(kwargs))
         elif surface == "trader":
-            resp = self._conn.root.call_trader(name, list(args), dict(kwargs))
+            resp = conn.root.call_trader(name, list(args), dict(kwargs))
         else:
             raise ValueError(f"unknown surface: {surface}")
 
@@ -156,18 +193,23 @@ class QmtClient:
         # element; for 134 calls that adds 29s on a LAN connection.
         import json
         calls_json = json.dumps(calls, ensure_ascii=False)
-        resp = self._conn.root.batch_call_xtdata(name, calls_json)
+        conn = self._ensure_connected()
+        resp = conn.root.batch_call_xtdata(name, calls_json)
         resp = rpyc.classic.obtain(resp)
         if resp.get("status") != "ok":
             raise _map_error(resp)
         return resp["results"]
 
     def health(self):
-        return rpyc.classic.obtain(self._conn.root.health())
+        conn = self._ensure_connected()
+        return rpyc.classic.obtain(conn.root.health())
 
     def subscribe(self, event_types, account_id=None, on_event=None, poll_interval=1.0):
-        sub_id = self._conn.root.subscribe_event(list(event_types), account_id)
-        poller = _EventPoller(self._conn, sub_id, on_event, poll_interval)
+        if poll_interval <= 0:
+            raise ValueError("poll_interval must be greater than 0")
+        conn = self._ensure_connected()
+        sub_id = conn.root.subscribe_event(list(event_types), account_id)
+        poller = _EventPoller(conn, sub_id, on_event, poll_interval)
         if on_event is not None:
             poller.start()
         self._pollers[sub_id] = poller
@@ -177,10 +219,12 @@ class QmtClient:
         poller = self._pollers.pop(sub_id, None)
         if poller:
             poller.stop()
-        self._conn.root.unsubscribe_event(sub_id)
+        conn = self._ensure_connected()
+        conn.root.unsubscribe_event(sub_id)
 
     def drain_events(self, sub_id, max_count=100):
-        return rpyc.classic.obtain(self._conn.root.poll_events(sub_id, max_count))
+        conn = self._ensure_connected()
+        return rpyc.classic.obtain(conn.root.poll_events(sub_id, max_count))
 
     def __enter__(self):
         return self
@@ -189,11 +233,27 @@ class QmtClient:
         self.close()
 
     def close(self):
-        for poller in self._pollers.values():
-            poller.stop()
+        if self._closed:
+            return
+        self._closed = True
+        pollers = list(self._pollers.values())
+        for poller in pollers:
+            poller.request_stop()
         self._pollers.clear()
-        if self._conn:
-            self._conn.close()
+        conn = self._conn
+        self._conn = None
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                logger.warning("Failed to close RPyC connection", exc_info=True)
+        for poller in pollers:
+            poller.stop()
+
+    def _ensure_connected(self):
+        if self._closed or self._conn is None:
+            raise NotConnectedError("NotConnected", "client is closed")
+        return self._conn
 
     def self_test(self, test_symbols=None, timeout=30.0):
         """Run a self-test against all read-only query interfaces.

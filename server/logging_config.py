@@ -4,6 +4,11 @@ import os
 
 
 def setup_logging(log_dir="logs"):
+    root = logging.getLogger()
+    for handler in root.handlers:
+        if getattr(handler, "_qmt_rpyc_handler", False):
+            return
+
     os.makedirs(log_dir, exist_ok=True)
     fmt = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -17,7 +22,8 @@ def setup_logging(log_dir="logs"):
     console.setLevel(logging.WARNING)
     console.setFormatter(fmt)
 
-    root = logging.getLogger()
     root.setLevel(logging.INFO)
+    file_handler._qmt_rpyc_handler = True
+    console._qmt_rpyc_handler = True
     root.addHandler(file_handler)
     root.addHandler(console)

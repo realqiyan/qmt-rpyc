@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import threading
 import pytest
 
 
@@ -89,6 +90,95 @@ class TestConnectionManager:
         assert result["status"] == "error"
         assert result["error_type"] == "NotConnected"
 
+    def test_initialized_trader_rejects_calls_before_connect(
+            self, mock_xtquant):
+        from server.connection import ConnectionManager
+        cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
+        cm._init_trader()
+        try:
+            result = cm.call_trader_method(
+                "query_stock_asset", ["ACC1"], {})
+            assert result["status"] == "error"
+            assert result["error_type"] == "NotConnected"
+        finally:
+            cm.stop()
+
+    def test_reconnect_subscribes_once_and_preserves_attempt_count(
+            self, mock_xtquant, monkeypatch):
+        import server.connection as connection
+
+        cm = connection.ConnectionManager(
+            path="test", session_id=1, account_id="ACC1")
+        cm._init_trader()
+        cm.RECONNECT_BACKOFF = [0]
+        subscriptions = []
+        events = []
+        monkeypatch.setattr(cm, "_reset_trader", lambda: None)
+        monkeypatch.setattr(
+            cm, "_subscribe_trader",
+            lambda trader, native_lock, account_id:
+                subscriptions.append(account_id) or True)
+        monkeypatch.setattr(connection.event_bus, "publish", events.append)
+
+        try:
+            cm._reconnect_loop()
+            assert subscriptions == ["ACC1"]
+            assert events[0]["data"]["attempts"] == 1
+            assert cm.get_health_status()["reconnect_attempts"] == 0
+            assert cm._heartbeat_thread.is_alive()
+        finally:
+            cm.stop()
+
+    def test_heartbeat_timeout_does_not_hold_state_lock(
+            self, mock_xtquant):
+        from server.connection import ConnectionManager
+
+        release = threading.Event()
+        cm = ConnectionManager(
+            path="test",
+            session_id=1,
+            account_id="ACC1",
+            heartbeat_timeout=0.01,
+        )
+        cm._init_trader()
+        assert cm.connect() is True
+        cm.trader.query_stock_asset = lambda account: release.wait(1)
+        try:
+            assert cm._do_heartbeat() is False
+            assert cm._trader_lock.acquire(timeout=0.1) is True
+            cm._trader_lock.release()
+        finally:
+            release.set()
+            cm.stop()
+
+    def test_reset_replaces_native_lock_generation(self, mock_xtquant):
+        from server.connection import ConnectionManager
+
+        cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
+        cm._init_trader()
+        old_lock = cm._native_lock
+        acquired = threading.Event()
+        release = threading.Event()
+
+        def hold_old_generation():
+            with old_lock:
+                acquired.set()
+                release.wait(1)
+
+        thread = threading.Thread(target=hold_old_generation, daemon=True)
+        thread.start()
+        assert acquired.wait(0.5)
+
+        try:
+            cm._reset_trader()
+            assert cm._native_lock is not old_lock
+            assert cm._native_lock.acquire(timeout=0.1)
+            cm._native_lock.release()
+        finally:
+            release.set()
+            thread.join(timeout=1)
+            cm.stop()
+
     def test_account_wrapping(self, mock_xtquant):
         from server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
@@ -107,6 +197,7 @@ class TestConnectionManager:
         cm = connection.ConnectionManager(
             path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
+        assert cm.connect() is True
         result = cm.call_trader_method(
             "query_stock_asset", ["ACC1"], {})
         assert result["status"] == "ok"
@@ -117,6 +208,7 @@ class TestConnectionManager:
         from server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
+        assert cm.connect() is True
         result = cm.call_trader_method(
             "query_new_purchase_limit", ["ACC1"], {})
         assert result["status"] == "ok"
@@ -127,6 +219,7 @@ class TestConnectionManager:
         from server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
+        assert cm.connect() is True
         result = cm.call_trader_method(
             "query_new_purchase_limit", [], {"account": "ACC1"})
         assert result["status"] == "ok"
@@ -138,6 +231,7 @@ class TestConnectionManager:
         from xtquant.xttype import StockAccount
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
+        assert cm.connect() is True
         account = StockAccount("ACC2")
         result = cm.call_trader_method(
             "query_new_purchase_limit", [account], {})
@@ -149,6 +243,7 @@ class TestConnectionManager:
         from server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
+        assert cm.connect() is True
         result = cm.call_trader_method(
             "echo_account_id", [], {"account_id": "ACC1"})
         assert result == {"status": "ok", "data": "ACC1"}
@@ -165,6 +260,7 @@ class TestConnectionManager:
 
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
+        assert cm.connect() is True
         monkeypatch.setattr(
             _xtquant_mock, "StockAccount", BrokenStockAccount)
         result = cm.call_trader_method(

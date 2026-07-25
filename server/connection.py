@@ -76,8 +76,9 @@ class _Callback:
     still reaches subscribers even when serialization fails.
     """
 
-    def __init__(self, manager):
+    def __init__(self, manager, trader=None):
         self._manager = manager
+        self._trader = trader
 
     @staticmethod
     def _safe_serialize(obj):
@@ -131,7 +132,7 @@ class _Callback:
             "data": None,
         })
         try:
-            self._manager.mark_disconnected()
+            self._manager.mark_disconnected(self._trader)
         except Exception:
             logger.warning("mark_disconnected failed", exc_info=True)
 
@@ -200,6 +201,7 @@ class ConnectionManager:
         self._reconnect_max_attempts = reconnect_max_attempts
 
         self._trader = None
+        self._native_lock = None
         self._callback = None
         self._connected = False
         self._trader_lock = threading.RLock()
@@ -241,93 +243,132 @@ class ConnectionManager:
             if t is not None and t.is_alive():
                 t.join(timeout=_STOP_JOIN_TIMEOUT)
         with self._trader_lock:
-            if self._trader is not None:
-                try:
-                    self._trader.stop()
-                except Exception:
-                    pass
-                self._trader = None
+            trader = self._trader
+            self._trader = None
+            self._native_lock = None
             self._connected = False
+        self._stop_trader(trader)
         logger.info("ConnectionManager stopped")
 
     # ── trader init / connect ──────────────────────────────────────
 
     def _init_trader(self):
+        trader = None
+        try:
+            from xtquant.xttrader import XtQuantTrader
+            trader = XtQuantTrader(self._path, self._session_id)
+            discovered = _discover_account_parameters(type(trader))
+            callback = _Callback(self, trader)
+            trader.register_callback(callback)
+            trader.start()
+        except ImportError:
+            logger.error("xtquant not available")
+            self._stop_trader(trader)
+            return
+        except Exception:
+            logger.exception("trader init failed")
+            self._stop_trader(trader)
+            return
+
         with self._trader_lock:
-            try:
-                from xtquant.xttrader import XtQuantTrader
-                self._trader = XtQuantTrader(self._path, self._session_id)
-                discovered = _discover_account_parameters(type(self._trader))
+            if self._stop_event.is_set():
+                should_stop = True
+            else:
+                self._trader = trader
+                self._native_lock = threading.Lock()
+                self._callback = callback
                 self._account_parameters = {
                     name: _AccountParameter("account", 0)
                     for name in _ACCOUNT_METHODS
                 }
                 self._account_parameters.update(discovered)
-                logger.info(
-                    "Discovered %d Trader methods requiring "
-                    "StockAccount adaptation",
-                    len(discovered),
-                )
-                self._callback = _Callback(self)
-                self._trader.register_callback(self._callback)
-                self._trader.start()
-                self._daemonize_threads()
-                logger.info("XtQuantTrader initialized (path=%s, session=%d)",
-                            self._path or "(empty)", self._session_id)
-            except ImportError:
-                logger.error("xtquant not available")
-            except Exception as e:
-                logger.error("trader init failed: %s", e)
+                should_stop = False
+
+        if should_stop:
+            self._stop_trader(trader)
+            return
+
+        logger.info(
+            "Discovered %d Trader methods requiring StockAccount adaptation",
+            len(discovered),
+        )
+        logger.info("XtQuantTrader initialized (path=%s, session=%d)",
+                    self._path or "(empty)", self._session_id)
 
     def connect(self) -> bool:
         """Attempt a single connection.  Returns True on success."""
         with self._trader_lock:
-            if self._trader is None:
+            trader = self._trader
+            native_lock = self._native_lock
+            if (trader is None or native_lock is None
+                    or self._stop_event.is_set()):
                 return False
-            try:
-                result = self._trader.connect()
-                if result != 0:
+
+        try:
+            with native_lock:
+                result = trader.connect()
+        except Exception as e:
+            logger.error("connect failed: %s", e)
+            with self._trader_lock:
+                if self._trader is trader:
                     self._connected = False
-                    return False
-            except Exception as e:
-                logger.error("connect failed: %s", e)
+            return False
+
+        with self._trader_lock:
+            if self._trader is not trader or self._stop_event.is_set():
+                return False
+            if result != 0:
                 self._connected = False
                 return False
 
+        # Subscribe after successful connect
+        if self._account_id and not self._subscribe_trader(
+                trader, native_lock, self._account_id):
+            with self._trader_lock:
+                if self._trader is trader:
+                    self._connected = False
+            return False
+
+        with self._trader_lock:
+            if self._trader is not trader or self._stop_event.is_set():
+                return False
             self._connected = True
             self._last_heartbeat = datetime.now()
             self._heartbeat_failures = 0
-            self._reconnect_attempts = 0
-
-        # Subscribe after successful connect
-        if self._account_id:
-            self.subscribe(self._account_id)
         return True
 
     def subscribe(self, account_id) -> bool:
         with self._trader_lock:
-            if self._trader is None:
+            trader = self._trader
+            native_lock = self._native_lock
+            if (trader is None or native_lock is None
+                    or not self._connected):
                 return False
-            try:
-                from xtquant.xttype import StockAccount
-                acc = StockAccount(account_id)
-                result = self._trader.subscribe(acc)
-                if result == 0:
-                    logger.info("Subscribed to account %s", account_id)
-                    return True
-                else:
-                    logger.warning("subscribe returned %s for account %s",
-                                   result, account_id)
-                    return False
-            except Exception as e:
-                logger.error("subscribe failed: %s", e)
-                return False
+        return self._subscribe_trader(trader, native_lock, account_id)
+
+    @staticmethod
+    def _subscribe_trader(trader, native_lock, account_id) -> bool:
+        try:
+            from xtquant.xttype import StockAccount
+            acc = StockAccount(account_id)
+            with native_lock:
+                result = trader.subscribe(acc)
+            if result == 0:
+                logger.info("Subscribed to account %s", account_id)
+                return True
+            logger.warning("subscribe returned %s for account %s",
+                           result, account_id)
+            return False
+        except Exception as e:
+            logger.error("subscribe failed: %s", e)
+            return False
 
     # ── properties ─────────────────────────────────────────────────
 
     @property
     def is_connected(self) -> bool:
-        return self._connected
+        with self._trader_lock:
+            return self._connected
 
     @property
     def trader(self):
@@ -351,21 +392,25 @@ class ConnectionManager:
 
     def _heartbeat_loop(self):
         while not self._stop_event.wait(self._heartbeat_interval):
-            if not self._connected:
-                continue
+            with self._trader_lock:
+                if not self._connected:
+                    continue
 
             ok = self._do_heartbeat()
             if ok:
-                self._last_heartbeat = datetime.now()
-                self._heartbeat_failures = 0
+                with self._trader_lock:
+                    self._last_heartbeat = datetime.now()
+                    self._heartbeat_failures = 0
             else:
-                self._heartbeat_failures += 1
+                with self._trader_lock:
+                    self._heartbeat_failures += 1
+                    failures = self._heartbeat_failures
                 logger.warning("Heartbeat failure %d/%d",
-                               self._heartbeat_failures,
+                               failures,
                                self._heartbeat_max_failures)
-                if self._heartbeat_failures >= self._heartbeat_max_failures:
+                if failures >= self._heartbeat_max_failures:
                     logger.error("Heartbeat lost — %d consecutive failures",
-                                 self._heartbeat_failures)
+                                 failures)
                     self.mark_disconnected()
 
     def _do_heartbeat(self) -> bool:
@@ -378,31 +423,38 @@ class ConnectionManager:
           against xtquant hangs (e.g. QMT process frozen but not dead).
         """
         result_container = [False]
+        with self._trader_lock:
+            trader = self._trader
+            native_lock = self._native_lock
+            connected = self._connected
+
+        if trader is None or native_lock is None or not connected:
+            return False
 
         def _check():
             try:
-                if self._account_id:
-                    with self._trader_lock:
-                        if self._trader is None:
-                            return
+                with native_lock:
+                    if self._account_id:
                         from xtquant.xttype import StockAccount
                         acc = StockAccount(self._account_id)
-                        asset = self._trader.query_stock_asset(acc)
-                    if asset is not None:
-                        result_container[0] = True
-                else:
-                    # No account ― test data path as lightweight liveness probe
-                    try:
-                        from xtquant import xtdata
-                        cal = xtdata.get_trading_calendar("SH")
-                        if cal is not None:
+                        asset = trader.query_stock_asset(acc)
+                        if asset is not None:
                             result_container[0] = True
-                    except ImportError:
-                        # xtdata not available either; mark alive if trader exists
-                        with self._trader_lock:
-                            result_container[0] = self._trader is not None
-                    except Exception:
-                        pass
+                    else:
+                        # No account ― test data path as lightweight liveness probe
+                        try:
+                            from xtquant import xtdata
+                            cal = xtdata.get_trading_calendar("SH")
+                            if cal is not None:
+                                result_container[0] = True
+                        except ImportError:
+                            # xtdata unavailable; current trader still counts as alive
+                            with self._trader_lock:
+                                result_container[0] = (
+                                    self._trader is trader
+                                    and self._connected)
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
@@ -417,15 +469,18 @@ class ConnectionManager:
 
     # ── disconnect / reconnect ─────────────────────────────────────
 
-    def mark_disconnected(self):
+    def mark_disconnected(self, source_trader=None):
         """Mark connection as lost and trigger reconnection.
 
         Called from _Callback.on_disconnected (xtquant callback) or after
         consecutive heartbeat failures.
         """
-        was_connected = self._connected
-        self._connected = False
-        self._last_heartbeat = None
+        with self._trader_lock:
+            if source_trader is not None and self._trader is not source_trader:
+                return
+            was_connected = self._connected
+            self._connected = False
+            self._last_heartbeat = None
         if was_connected:
             logger.warning("QMT connection lost")
         self.schedule_reconnect()
@@ -435,7 +490,7 @@ class ConnectionManager:
         with self._trader_lock:
             if self._trader is None:
                 return
-        self._connected = False
+            self._connected = False
         with self._state_lock:
             if self._reconnect_thread is not None and self._reconnect_thread.is_alive():
                 return
@@ -466,33 +521,32 @@ class ConnectionManager:
                         self._reconnect_attempts, delay)
             self._reset_trader()
 
+            attempt_number = self._reconnect_attempts
             if self.connect():
-                # Re-subscribe account after successful reconnect
-                if self._account_id:
-                    self.subscribe(self._account_id)
                 # Notify subscribers
                 event_bus.publish({
                     "type": "reconnect",
                     "timestamp": datetime.now().isoformat(),
                     "account_id": self._account_id,
-                    "data": {"attempts": self._reconnect_attempts},
+                    "data": {"attempts": attempt_number},
                 })
-                self._daemonize_threads()
-                self._heartbeat_failures = 0
+                self.start_heartbeat()
+                with self._trader_lock:
+                    self._heartbeat_failures = 0
+                    self._reconnect_attempts = 0
                 logger.info("Reconnect successful after %d attempt(s)",
-                            self._reconnect_attempts)
+                            attempt_number)
                 return
 
     def _reset_trader(self):
         """Stop old trader and create a fresh one."""
         with self._trader_lock:
-            if self._trader is not None:
-                try:
-                    self._trader.stop()
-                except Exception:
-                    pass
-                self._trader = None
-            self._init_trader()
+            trader = self._trader
+            self._trader = None
+            self._native_lock = None
+            self._connected = False
+        self._stop_trader(trader)
+        self._init_trader()
 
     # ── trader method dispatch ─────────────────────────────────────
 
@@ -522,46 +576,65 @@ class ConnectionManager:
 
     def call_trader_method(self, name, args, kwargs):
         with self._trader_lock:
-            if self._trader is None:
+            trader = self._trader
+            native_lock = self._native_lock
+            if (trader is None or native_lock is None
+                    or not self._connected):
                 return {"status": STATUS_ERROR, "error_type": "NotConnected",
                         "error_message": "trader not connected"}
-            method = getattr(self._trader, name, None)
-            if method is None:
-                return {"status": STATUS_ERROR, "error_type": "AttributeError",
-                        "error_message": f"trader has no method {name!r}"}
-            try:
+        try:
+            with native_lock:
+                method = getattr(trader, name, None)
+                if method is None:
+                    return {
+                        "status": STATUS_ERROR,
+                        "error_type": "AttributeError",
+                        "error_message": f"trader has no method {name!r}",
+                    }
                 args, kwargs = self._wrap_account_if_needed(
                     name, args, kwargs)
                 result = method(*args, **kwargs)
-                return {"status": STATUS_OK, "data": serialize(result)}
-            except Exception as e:
-                logger.warning("call_trader(%s) raised %s: %s",
-                               name, type(e).__name__, e)
-                return {"status": STATUS_ERROR, "error_type": type(e).__name__,
-                        "error_message": str(e)}
+            return {"status": STATUS_OK, "data": serialize(result)}
+        except Exception as e:
+            logger.warning("call_trader(%s) raised %s: %s",
+                           name, type(e).__name__, e)
+            return {"status": STATUS_ERROR, "error_type": type(e).__name__,
+                    "error_message": str(e)}
 
     # ── health ─────────────────────────────────────────────────────
 
     def get_health_status(self):
         with self._trader_lock:
             trader_available = self._trader is not None
-        return {
-            "connected": self._connected,
-            "last_heartbeat": self._last_heartbeat.isoformat()
-                              if self._last_heartbeat else "",
-            "heartbeat_failures": self._heartbeat_failures,
-            "reconnect_attempts": self._reconnect_attempts,
-            "uptime_seconds": round(time.time() - self._start_time, 1),
-            "trader_available": trader_available,
-        }
+            return {
+                "connected": self._connected,
+                "last_heartbeat": self._last_heartbeat.isoformat()
+                                  if self._last_heartbeat else "",
+                "heartbeat_failures": self._heartbeat_failures,
+                "reconnect_attempts": self._reconnect_attempts,
+                "uptime_seconds": round(time.time() - self._start_time, 1),
+                "trader_available": trader_available,
+            }
 
     # ── internal helpers ───────────────────────────────────────────
 
-    def _daemonize_threads(self):
-        """Mark all non-daemon threads as daemon so they don't block exit."""
-        for t in threading.enumerate():
-            if t is not threading.current_thread() and not t.daemon:
-                try:
-                    t.daemon = True
-                except RuntimeError:
-                    pass
+    @staticmethod
+    def _stop_trader(trader):
+        if trader is None:
+            return
+
+        def _stop():
+            try:
+                trader.stop()
+            except Exception:
+                logger.warning("trader stop failed", exc_info=True)
+
+        thread = threading.Thread(
+            target=_stop, name="qmt-trader-stop", daemon=True)
+        thread.start()
+        thread.join(timeout=_STOP_JOIN_TIMEOUT)
+        if thread.is_alive():
+            logger.error(
+                "trader stop timed out after %ds; detaching stale trader",
+                _STOP_JOIN_TIMEOUT,
+            )

@@ -6,13 +6,36 @@ import threading
 
 import rpyc
 
-from common.protocol import verify_auth_token, STATUS_OK, STATUS_ERROR
+from common.protocol import (
+    AUTH_TIMESTAMP_WINDOW,
+    EVENT_TYPES,
+    verify_auth_token,
+    STATUS_OK,
+    STATUS_ERROR,
+)
 from server.auth_limiter import rate_limiter
 from server.event_bus import event_bus
 from server.download_manager import is_download_function
 from server.serializer import serialize
 
 logger = logging.getLogger(__name__)
+_auth_nonces = {}
+_auth_nonce_lock = threading.Lock()
+
+
+def _consume_auth_nonce(nonce):
+    now = time.time()
+    with _auth_nonce_lock:
+        expired = [
+            value for value, expires_at in _auth_nonces.items()
+            if expires_at <= now
+        ]
+        for value in expired:
+            _auth_nonces.pop(value, None)
+        if nonce in _auth_nonces:
+            return False
+        _auth_nonces[nonce] = now + AUTH_TIMESTAMP_WINDOW
+        return True
 
 # ── argument / return-value summarizers for logging ──────────────────
 
@@ -85,7 +108,7 @@ _MATERIALIZE_MAX_DEPTH = 64
 
 def _materialize(obj, _depth=0):
     if _depth > _MATERIALIZE_MAX_DEPTH:
-        return obj
+        raise ValueError("argument nesting exceeds materialization depth limit")
     module = getattr(type(obj), "__module__", "")
     if module == "rpyc.core.netref":
         if isinstance(obj, list):
@@ -99,7 +122,28 @@ def _materialize(obj, _depth=0):
 # ── batch call helpers ───────────────────────────────────────────────
 
 _BATCH_MAX_CALLS = 500
-_BATCH_MAX_WORKERS = int(os.environ.get("QMT_BATCH_MAX_WORKERS", "8"))
+_EVENT_POLL_MAX_COUNT = 1000
+
+
+def _positive_env_int(name, default):
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError as e:
+        raise ValueError(f"{name} must be an integer") from e
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1")
+    return value
+
+
+_BATCH_MAX_WORKERS = _positive_env_int("QMT_BATCH_MAX_WORKERS", 8)
+
+
+def _error(error_type, message):
+    return {
+        "status": STATUS_ERROR,
+        "error_type": error_type,
+        "error_message": message,
+    }
 
 
 def _execute_one(name, args, kwargs):
@@ -172,7 +216,10 @@ class XtquantService(rpyc.Service):
         if rate_limiter.is_locked(ip):
             logger.warning("[%s] authenticate blocked by rate limiter", ip)
             return False
-        ok = verify_auth_token(self.__class__._auth_key, nonce, timestamp, token)
+        ok = verify_auth_token(
+            self.__class__._auth_key, nonce, timestamp, token)
+        if ok:
+            ok = _consume_auth_nonce(nonce)
         if ok:
             self._authenticated = True
             rate_limiter.record_success(ip)
@@ -236,6 +283,8 @@ class XtquantService(rpyc.Service):
             return {"status": STATUS_ERROR, "error_type": "AttributeError",
                     "error_message": f"xtdata has no attribute {name!r}"}
         try:
+            args = [_materialize(a) for a in args]
+            kwargs = {k: _materialize(v) for k, v in kwargs.items()}
             task_id = self.__class__._download_mgr.submit(
                 fn, function_name=name, has_progress=False, _args=args, **kwargs)
             return {"status": STATUS_OK, "data": {"task_id": task_id, "_is_download_task": True}}
@@ -255,9 +304,16 @@ class XtquantService(rpyc.Service):
             result = {"status": STATUS_ERROR, "error_type": "NotConnected",
                       "error_message": "connection manager not configured"}
         else:
-            args = [_materialize(a) for a in args]
-            kwargs = {k: _materialize(v) for k, v in kwargs.items()}
-            result = cm.call_trader_method(name, args, kwargs)
+            try:
+                args = [_materialize(a) for a in args]
+                kwargs = {k: _materialize(v) for k, v in kwargs.items()}
+                result = cm.call_trader_method(name, args, kwargs)
+            except Exception as e:
+                logger.warning(
+                    "materialize trader arguments failed",
+                    exc_info=True,
+                )
+                result = _error(type(e).__name__, str(e))
         try:
             result_summary = _summarize_rpc_result(result)
         except Exception:
@@ -276,6 +332,20 @@ class XtquantService(rpyc.Service):
     def exposed_subscribe_event(self, event_types, account_id=None):
         self._require_authed()
         self._log_request("subscribe_event", "types=%s account=%s" % (event_types, account_id))
+        event_types = _materialize(event_types)
+        if not isinstance(event_types, (list, tuple, set)):
+            raise TypeError("event_types must be a list, tuple, or set")
+        event_types = list(event_types)
+        if not event_types:
+            raise ValueError("event_types must not be empty")
+        if any(not isinstance(event_type, str) for event_type in event_types):
+            raise TypeError("each event type must be a string")
+        unknown = sorted(set(event_types) - set(EVENT_TYPES))
+        if unknown:
+            raise ValueError(
+                "unsupported event types: " + ", ".join(unknown))
+        if account_id is not None and not isinstance(account_id, str):
+            raise TypeError("account_id must be a string or None")
         sub_id = event_bus.subscribe(event_types, account_id)
         self._subscription_ids.add(sub_id)
         return sub_id
@@ -283,12 +353,20 @@ class XtquantService(rpyc.Service):
     def exposed_unsubscribe_event(self, sub_id):
         self._require_authed()
         self._log_request("unsubscribe_event", "sub_id=%s" % sub_id)
+        if sub_id not in self._subscription_ids:
+            return False
         self._subscription_ids.discard(sub_id)
         return event_bus.unsubscribe(sub_id)
 
     def exposed_poll_events(self, sub_id, max_count=100):
         self._require_authed()
         self._log_request("poll_events", "sub_id=%s max=%s" % (sub_id, max_count), level=logging.DEBUG)
+        if sub_id not in self._subscription_ids:
+            return [], 0
+        if (not isinstance(max_count, int) or isinstance(max_count, bool)
+                or not 1 <= max_count <= _EVENT_POLL_MAX_COUNT):
+            raise ValueError(
+                f"max_count must be between 1 and {_EVENT_POLL_MAX_COUNT}")
         sub = event_bus.get_subscription(sub_id)
         if sub is None:
             return [], 0
@@ -309,7 +387,16 @@ class XtquantService(rpyc.Service):
         # ── deserialise calls (JSON string from new clients,
         #     netref list from old clients) ───────────────────────
         if isinstance(calls, str):
-            calls = json.loads(calls)
+            try:
+                calls = json.loads(calls)
+            except (TypeError, ValueError) as e:
+                return _error("InvalidBatch", f"invalid calls JSON: {e}")
+
+        if not isinstance(calls, (list, tuple)):
+            return _error(
+                "TypeError",
+                f"calls must be a list or tuple, got {type(calls).__name__}",
+            )
 
         # ── early exit for empty batch ────────────────────────────
         if not calls:
@@ -365,6 +452,19 @@ class XtquantService(rpyc.Service):
                         f"got {type(call).__name__}"
                     ),
                 }
+            args, kwargs = call
+            if not isinstance(args, (list, tuple)):
+                return _error(
+                    "TypeError",
+                    f"calls[{i}].args must be a list or tuple, "
+                    f"got {type(args).__name__}",
+                )
+            if not isinstance(kwargs, dict):
+                return _error(
+                    "TypeError",
+                    f"calls[{i}].kwargs must be a dict, "
+                    f"got {type(kwargs).__name__}",
+                )
 
         # ── concurrent execution ─────────────────────────────────
         max_workers = min(len(calls), _BATCH_MAX_WORKERS)
@@ -372,11 +472,14 @@ class XtquantService(rpyc.Service):
         _t_total = time.time()
 
         # Materialize args before submitting to executor.
-        materialized_calls = [
-            ([_materialize(a) for a in args],
-             {k: _materialize(v) for k, v in kwargs.items()})
-            for args, kwargs in calls
-        ]
+        try:
+            materialized_calls = [
+                ([_materialize(a) for a in args],
+                 {k: _materialize(v) for k, v in kwargs.items()})
+                for args, kwargs in calls
+            ]
+        except Exception as e:
+            return _error(type(e).__name__, str(e))
         _t_mat = time.time()
 
         from concurrent.futures import ThreadPoolExecutor, as_completed

@@ -19,6 +19,7 @@ EVENT_TYPES = {
     "cancel_error": "on_cancel_error",
     "account_status": "on_account_status",
     "async_response": "on_order_stock_async_response",
+    "reconnect": None,
 }
 
 
@@ -28,6 +29,14 @@ def make_auth_token(auth_key: str, nonce: str, timestamp: int) -> str:
 
 
 def verify_auth_token(auth_key: str, nonce: str, timestamp: int, token: str) -> bool:
+    if not isinstance(auth_key, str) or not auth_key:
+        return False
+    if not isinstance(nonce, str) or len(nonce) != AUTH_NONCE_LEN:
+        return False
+    if not isinstance(timestamp, int) or isinstance(timestamp, bool):
+        return False
+    if not isinstance(token, str) or len(token) != 64:
+        return False
     now = int(time.time())
     if abs(now - timestamp) > AUTH_TIMESTAMP_WINDOW:
         return False

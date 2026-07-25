@@ -1,7 +1,7 @@
 import threading
 import uuid
 import logging
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Callable
@@ -45,19 +45,35 @@ class DownloadTask:
 
 class DownloadTaskManager:
     def __init__(self, max_workers=2, max_completed=_MAX_COMPLETED):
+        if max_workers < 1:
+            raise ValueError("max_workers must be at least 1")
+        if max_completed < 1:
+            raise ValueError("max_completed must be at least 1")
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._tasks = {}
         self._lock = threading.Lock()
         self._max_completed = max_completed
+        self._accepting = True
 
     def submit(self, func, function_name, has_progress=False, _args=(), **kwargs):
-        task_id = str(uuid.uuid4())[:8]
+        task_id = str(uuid.uuid4())
         task = DownloadTask(
             task_id=task_id,
             function_name=function_name,
             status="started",
             submitted_at=datetime.now(),
         )
+
+        with self._lock:
+            if not self._accepting:
+                task.status = "failed"
+                task.error = "download manager is shutting down"
+                task.completed_at = datetime.now()
+                self._tasks[task_id] = task
+                self._prune_locked()
+                return task_id
+            self._tasks[task_id] = task
+            self._prune_locked()
 
         try:
             if has_progress:
@@ -68,17 +84,13 @@ class DownloadTaskManager:
                 future = self._executor.submit(
                     self._run_simple, func, task_id, _args, **kwargs)
         except RuntimeError as e:
-            task.status = "failed"
-            task.error = "submit failed: {}".format(e)
-            task.completed_at = datetime.now()
             with self._lock:
-                self._tasks[task_id] = task
+                task.status = "failed"
+                task.error = "submit failed: {}".format(e)
+                task.completed_at = datetime.now()
                 self._prune_locked()
             return task_id
 
-        with self._lock:
-            self._tasks[task_id] = task
-            self._prune_locked()
         future.add_done_callback(lambda f: self._on_done(task_id, f))
         return task_id
 
@@ -88,7 +100,9 @@ class DownloadTaskManager:
             return task.to_dict() if task else None
 
     def shutdown(self):
-        self._executor.shutdown(wait=False)
+        with self._lock:
+            self._accepting = False
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _prune_locked(self):
         if len(self._tasks) <= self._max_completed:
@@ -107,16 +121,27 @@ class DownloadTaskManager:
 
     def _make_progress_callback(self, task_id):
         def on_progress(data):
-            with self._lock:
-                task = self._tasks.get(task_id)
-                if task:
-                    task.status = "running"
-                    task.progress = {
-                        "total": data.get("total"),
-                        "finished": data.get("finished"),
-                        "stockcode": data.get("stockcode", ""),
-                        "message": data.get("message", ""),
-                    }
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError(
+                        "download progress must be a dict, got "
+                        + type(data).__name__)
+                with self._lock:
+                    task = self._tasks.get(task_id)
+                    if task:
+                        task.status = "running"
+                        task.progress = {
+                            "total": data.get("total"),
+                            "finished": data.get("finished"),
+                            "stockcode": data.get("stockcode", ""),
+                            "message": data.get("message", ""),
+                        }
+            except Exception:
+                logger.warning(
+                    "invalid progress callback for task %s",
+                    task_id,
+                    exc_info=True,
+                )
         return on_progress
 
     def _run_simple(self, func, task_id, _args=(), **kwargs):
@@ -147,6 +172,8 @@ class DownloadTaskManager:
             if task is None:
                 return
             try:
+                if future.cancelled():
+                    raise CancelledError("download cancelled during shutdown")
                 exc = future.exception()
                 if exc:
                     task.status = "failed"
@@ -155,6 +182,6 @@ class DownloadTaskManager:
                     task.status = "completed"
             except Exception as e:
                 task.status = "failed"
-                task.error = str(e)
+                task.error = str(e) or type(e).__name__
             task.completed_at = datetime.now()
             self._prune_locked()

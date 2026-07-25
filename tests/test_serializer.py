@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -49,6 +51,16 @@ class TestPandas:
         assert list(df2.columns) == ["a"]
         assert df2.iloc[0, 0] == 1
 
+    def test_dataframe_with_timestamp_is_strict_json_safe(self):
+        df = pd.DataFrame({
+            "timestamp": [pd.Timestamp("2024-01-01T09:30:00")],
+            "missing": [pd.NA],
+        })
+        result = serialize(df)
+
+        assert result["data"][0] == ["2024-01-01T09:30:00", None]
+        json.dumps(result, allow_nan=False)
+
 
 class TestContainers:
     def test_dict(self):
@@ -65,6 +77,16 @@ class TestContainers:
     def test_nested(self):
         data = {"items": [{"id": 1}, {"id": 2}]}
         assert serialize(data) == {"items": [{"id": 1}, {"id": 2}]}
+
+    def test_non_finite_numbers_become_null(self):
+        result = serialize([float("nan"), float("inf"), np.float64("-inf")])
+        assert result == [None, None, None]
+        json.dumps(result, allow_nan=False)
+
+    def test_cycle_is_bounded(self):
+        value = []
+        value.append(value)
+        assert serialize(value) == ["<serialization cycle detected>"]
 
 
 class TestObjects:

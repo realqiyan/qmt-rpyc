@@ -97,3 +97,21 @@ class TestDownloadTaskManager:
             assert len(all_tasks) <= 3
         finally:
             mgr.shutdown()
+
+    def test_fast_tasks_never_lose_results(self):
+        mgr = DownloadTaskManager(max_workers=8, max_completed=2000)
+        task_ids = [
+            mgr.submit(lambda: 1, function_name="fast")
+            for _ in range(1000)
+        ]
+        mgr._executor.shutdown(wait=True)
+
+        tasks = [mgr.get_task(task_id) for task_id in task_ids]
+        assert all(task["status"] == "completed" for task in tasks)
+        assert all(task["result"] == 1 for task in tasks)
+
+    def test_invalid_limits_are_rejected(self):
+        with pytest.raises(ValueError):
+            DownloadTaskManager(max_workers=0)
+        with pytest.raises(ValueError):
+            DownloadTaskManager(max_completed=0)

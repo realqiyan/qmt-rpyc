@@ -109,6 +109,7 @@ All server configuration lives in `.env` (copy from `.env.example`):
 | `QMT_RPYC_HOST` | `0.0.0.0` | Listen address |
 | `QMT_RPYC_PORT` | `18812` | Listen port |
 | `QMT_RPYC_AUTH_KEY` | *(required)* | HMAC shared secret (client and server must match) |
+| `QMT_RPYC_ALLOW_INSECURE` | `0` | Explicitly allow startup without authentication; isolated tests only |
 | `QMT_PATH` | — | QMT/MiniQMT `userdata_mini` directory |
 | `QMT_SESSION_ID` | `1` | QMT session ID |
 | `QMT_ACCOUNT_ID` | — | Trading account ID (optional; enables heartbeat via `query_stock_asset`) |
@@ -119,7 +120,7 @@ All server configuration lives in `.env` (copy from `.env.example`):
 | `QMT_HEARTBEAT_TIMEOUT` | `5` | Seconds before heartbeat times out |
 | `QMT_HEARTBEAT_MAX_FAILURES` | `3` | Consecutive failures before triggering reconnect |
 | `QMT_RECONNECT_MAX_ATTEMPTS` | `0` | Max reconnect attempts (0 = unlimited) |
-| `QMT_BATCH_MAX_WORKERS` | `50` | Max concurrent workers for `batch_call_xtdata` |
+| `QMT_BATCH_MAX_WORKERS` | `8` | Max concurrent workers for `batch_call_xtdata` |
 | `QMT_RPYC_LOG_DIR` | `logs` | Log directory (daily rotation, 7-day retention) |
 
 ## TLS / mTLS
@@ -143,7 +144,7 @@ For mTLS, also pass `certfile` and `keyfile` in `tls_config`.
 Every `_RemoteCallable` on `client.xtdata` has a `.batch()` method for executing multiple calls to the same xtdata function in a single RPC round-trip. This is the primary way to reduce latency for option-chain or multi-instrument queries.
 
 **Server side:**
-- Calls are executed concurrently via `ThreadPoolExecutor` with `max_workers = min(len(calls), QMT_BATCH_MAX_WORKERS)` (env-configurable, default 50)
+- Calls are executed concurrently via `ThreadPoolExecutor` with `max_workers = min(len(calls), QMT_BATCH_MAX_WORKERS)` (env-configurable, default 8)
 - Max 500 calls per batch (hard cap `_BATCH_MAX_CALLS`)
 - `download_*` functions are rejected in batch mode (use `call_xtdata` for async downloads)
 - Each call independently materializes args (RPyC netref → plain Python), calls xtdata, and serializes the result
