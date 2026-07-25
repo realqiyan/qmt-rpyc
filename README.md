@@ -77,6 +77,21 @@ with QmtClient.connect("192.168.1.100", port=18812, auth_key="my-key") as client
 client.close()
 ```
 
+### Dump the Deployed API Surface
+
+Run the dump script with the Windows server virtual environment so it imports
+the same broker-customized xtquant build as the server:
+
+```bat
+.venv\Scripts\python.exe scripts\dump_api_surface.py
+```
+
+The JSON file is written to `api_surface.json` in the project root by default.
+It contains runtime version metadata, discovered xtdata functions, trader
+methods, constants, and xttype classes, but no authentication keys, account
+IDs, or local QMT paths. Use `--without-docs` for a smaller file or `--force`
+to replace an existing dump.
+
 ### Client Package (cross-platform)
 
 ```bash
