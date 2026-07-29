@@ -25,7 +25,7 @@ import threading
 import pytest
 import logging
 
-from client import QmtClient
+from qmt_rpyc import QmtClient
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -85,10 +85,12 @@ def live_server():
     # Use a dedicated test port distinct from production
     port = _DEFAULT_PORT
 
-    from server.service import XtquantService
-    from server.connection import ConnectionManager
-    from server.download_manager import DownloadTaskManager
-    from server.api_surface import build_api_surface
+    from qmt_rpyc.server.service import XtquantService
+    from qmt_rpyc.server.connection import ConnectionManager
+    from qmt_rpyc.server.download_manager import DownloadTaskManager
+    from qmt_rpyc.server.api_surface import build_api_surface
+    from qmt_rpyc.protocol import make_server_authenticator
+    from qmt_rpyc.server.auth_limiter import AuthRateLimiter
     from rpyc.utils.server import ThreadedServer
 
     cm = ConnectionManager(
@@ -105,19 +107,26 @@ def live_server():
 
     dm = DownloadTaskManager(max_workers=2)
 
-    XtquantService._auth_key = cfg["auth_key"]
-    XtquantService._require_auth = cfg["auth_key"] is not None
+    XtquantService._require_auth = bool(cfg["auth_key"])
     XtquantService._connection_mgr = cm
     XtquantService._download_mgr = dm
     XtquantService._api_surface = build_api_surface()
 
-    srv = ThreadedServer(
-        XtquantService,
-        port=port,
-        protocol_config={
+    server_options = {
+        "service": XtquantService,
+        "port": port,
+        "protocol_config": {
             "allow_public_attrs": True,
+            "allow_pickle": True,
             "sync_request_timeout": 300,
         },
+    }
+    if cfg["auth_key"]:
+        server_options["authenticator"] = make_server_authenticator(
+            cfg["auth_key"], AuthRateLimiter()
+        )
+    srv = ThreadedServer(
+        **server_options,
     )
     t = threading.Thread(target=srv.start, daemon=True, name="live-test-server")
     t.start()
@@ -128,12 +137,6 @@ def live_server():
     srv.close()
     cm.stop()
     dm.shutdown()
-
-    # Clean up server modules so other test modules don't pick up stale state
-    for mod in list(sys.modules.keys()):
-        if mod.startswith("server."):
-            del sys.modules[mod]
-
 
 @pytest.fixture(scope="module")
 def client(live_server):
@@ -669,7 +672,7 @@ class TestDownloadWorkflow:
         args = entry.get("args", ())
         kwargs = entry.get("kwargs", {})
 
-        from client.proxy import DownloadTaskHandle
+        from qmt_rpyc.proxy import DownloadTaskHandle
 
         # Check the API surface dict — the proxy's __getattr__ always returns
         # a _RemoteCallable, even for non-existent functions.
@@ -700,7 +703,7 @@ class TestErrorHandling:
 
     def test_nonexistent_function(self, client):
         """Calling a non-existent xtdata function raises an error via RPyC."""
-        from client.exceptions import RemoteCallError
+        from qmt_rpyc.exceptions import RemoteCallError
 
         with pytest.raises(RemoteCallError):
             client.xtdata.nonexistent_func_xyz()
@@ -719,7 +722,7 @@ class TestErrorHandling:
 
     def test_batch_nonexistent_function(self, client):
         """Batch calling a non-existent function raises error."""
-        from client.exceptions import QmtError
+        from qmt_rpyc.exceptions import QmtError
 
         with pytest.raises(QmtError):
             client.xtdata.nonexistent_func_xyz.batch([([], {})])
@@ -873,7 +876,7 @@ class TestTraderQueryMethods:
         if not account_id:
             pytest.skip("QMT_ACCOUNT_ID not set in .env — trader queries need an account")
 
-        from client.exceptions import RemoteCallError, NotConnectedError
+        from qmt_rpyc.exceptions import RemoteCallError, NotConnectedError
 
         fn = getattr(client.trader, name, None)
         if fn is None:

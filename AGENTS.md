@@ -27,7 +27,7 @@ Windows server setup and startup:
 ```bat
 scripts\setup.bat
 start-rpyc.bat
-REM Equivalent entry point: python -m server.main
+REM Equivalent entry point: qmt-rpyc-server start
 ```
 
 Common test commands:

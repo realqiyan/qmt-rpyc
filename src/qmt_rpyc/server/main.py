@@ -3,26 +3,43 @@ import os
 import sys
 import logging
 import faulthandler
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_CRASH_LOG = os.path.join(_HERE, "..", "logs", "crash.log")
-try:
-    os.makedirs(os.path.dirname(_CRASH_LOG), exist_ok=True)
-    _crash_fp = open(_CRASH_LOG, "a", encoding="utf-8")
-    _crash_fp.write("\n==== rpyc server start pid={} ====\n".format(os.getpid()))
-    _crash_fp.flush()
-    faulthandler.enable(file=_crash_fp, all_threads=True)
-except Exception:
-    faulthandler.enable()
+from pathlib import Path
 
 import pandas
 import numpy
 
-import server.datetime_patch
+import qmt_rpyc.server.datetime_patch
 
-from server.logging_config import setup_logging
+from qmt_rpyc.server.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
+_crash_fp = None
+
+
+def default_server_dir():
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return Path(base) / "qmt-rpyc"
+    return Path.home() / ".qmt-rpyc"
+
+
+def default_config_path():
+    return default_server_dir() / "config.env"
+
+
+def _enable_crash_log(log_dir):
+    global _crash_fp
+    try:
+        path = Path(log_dir) / "crash.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _crash_fp = path.open("a", encoding="utf-8")
+        _crash_fp.write(
+            "\n==== rpyc server start pid={} ====\n".format(os.getpid())
+        )
+        _crash_fp.flush()
+        faulthandler.enable(file=_crash_fp, all_threads=True)
+    except Exception:
+        faulthandler.enable()
 
 
 def _env_int(name, default, minimum, maximum=None):
@@ -52,11 +69,10 @@ def _env_bool(name, default=False):
     raise ValueError(f"{name} must be a boolean, got {raw!r}")
 
 
-def _load_config():
-    # 加载项目根目录 .env 文件到 os.environ（已存在的环境变量不会被覆盖）
+def _load_config(config_path=None):
     from dotenv import load_dotenv
-    _PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-    load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+    path = Path(config_path) if config_path else default_config_path()
+    load_dotenv(str(path), override=False)
     return {
         "host": os.environ.get("QMT_RPYC_HOST", "0.0.0.0"),
         "port": _env_int("QMT_RPYC_PORT", 18812, 1, 65535),
@@ -68,7 +84,10 @@ def _load_config():
         "tls_keyfile": os.environ.get("QMT_RPYC_TLS_KEY"),
         "tls_certfile": os.environ.get("QMT_RPYC_TLS_CERT"),
         "tls_ca_certs": os.environ.get("QMT_RPYC_TLS_CA"),
-        "log_dir": os.environ.get("QMT_RPYC_LOG_DIR", "logs"),
+        "log_dir": os.environ.get(
+            "QMT_RPYC_LOG_DIR", str(default_server_dir() / "logs")
+        ),
+        "config_path": str(path),
         "heartbeat_interval": _env_int(
             "QMT_HEARTBEAT_INTERVAL", 30, 1),
         "heartbeat_timeout": _env_int(
@@ -86,11 +105,12 @@ def _validate_config(cfg):
         not isinstance(auth_key, str)
         or not auth_key.strip()
         or auth_key == "your-secret-key-here"
+        or len(auth_key.encode("utf-8")) < 16
     )
     if invalid_auth_key and not cfg.get(
             "allow_insecure", False):
         raise ValueError(
-            "QMT_RPYC_AUTH_KEY is required; set "
+            "QMT_RPYC_AUTH_KEY must contain at least 16 bytes; set "
             "QMT_RPYC_ALLOW_INSECURE=1 only for an isolated test environment")
     if bool(cfg.get("tls_keyfile")) != bool(cfg.get("tls_certfile")):
         raise ValueError(
@@ -142,10 +162,12 @@ def start_server(cfg, tls=None):
 
     import socket
     from rpyc.utils.server import ThreadedServer
-    from server.service import XtquantService
-    from server.connection import ConnectionManager
-    from server.download_manager import DownloadTaskManager
-    from server.api_surface import build_api_surface
+    from qmt_rpyc.server.service import XtquantService
+    from qmt_rpyc.server.connection import ConnectionManager
+    from qmt_rpyc.server.download_manager import DownloadTaskManager
+    from qmt_rpyc.server.api_surface import build_api_surface
+    from qmt_rpyc.server.auth_limiter import rate_limiter
+    from qmt_rpyc.protocol import make_server_authenticator
 
     config = {
         "allow_public_attrs": True,
@@ -167,19 +189,27 @@ def start_server(cfg, tls=None):
             heartbeat_max_failures=cfg["heartbeat_max_failures"],
             reconnect_max_attempts=cfg["reconnect_max_attempts"],
         )
-        cm.start()
+        if not cm.start():
+            raise RuntimeError(
+                "QMT connection check failed; server was not started"
+            )
 
         dm = DownloadTaskManager(max_workers=2)
 
-        XtquantService._auth_key = auth_key
         XtquantService._require_auth = auth_key is not None
         XtquantService._connection_mgr = cm
         XtquantService._download_mgr = dm
+        XtquantService._active_clients = 0
         try:
             XtquantService._api_surface = build_api_surface()
         except ImportError:
             logger.error("Cannot build API surface -- xtquant not available")
             XtquantService._api_surface = {}
+
+        authenticator = (
+            make_server_authenticator(auth_key, rate_limiter)
+            if auth_key is not None else None
+        )
 
         if tls:
             import ssl
@@ -202,11 +232,12 @@ def start_server(cfg, tls=None):
                 listener_socket, server_side=True)
             server = ThreadedServer(
                 XtquantService, hostname=host, port=port,
-                protocol_config=config, listener=listener_socket)
+                protocol_config=config, listener=listener_socket,
+                authenticator=authenticator)
         else:
             server = ThreadedServer(
                 XtquantService, hostname=host, port=port,
-                protocol_config=config)
+                protocol_config=config, authenticator=authenticator)
 
         _print_startup_info(cfg, cm)
         logger.info("Starting RPyC server on %s:%d", host, port)
@@ -227,10 +258,11 @@ def start_server(cfg, tls=None):
         logger.info("Server stopped")
 
 
-def main():
-    cfg = _load_config()
+def main(config_path=None, verbose=False):
+    cfg = _load_config(config_path)
     _validate_config(cfg)
-    setup_logging(cfg["log_dir"])
+    setup_logging(cfg["log_dir"], verbose=verbose)
+    _enable_crash_log(cfg["log_dir"])
 
     tls = None
     if cfg["tls_keyfile"] and cfg["tls_certfile"]:

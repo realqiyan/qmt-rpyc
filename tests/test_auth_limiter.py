@@ -1,5 +1,5 @@
 import pytest
-from server.auth_limiter import AuthRateLimiter, _MAX_FAILURES, _LOCKOUT_SECONDS
+from qmt_rpyc.server.auth_limiter import AuthRateLimiter, _MAX_FAILURES, _LOCKOUT_SECONDS
 
 
 class TestAuthRateLimiter:

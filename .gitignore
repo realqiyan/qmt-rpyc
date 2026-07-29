@@ -1,11 +1,14 @@
 __pycache__/
 *.pyc
 *.egg-info/
+build/
+dist/
 logs/
 .venv/
 venv/
 *.disabled
 start_server.local.bat
 .env
+api_surface.json
 tmp/
 nul

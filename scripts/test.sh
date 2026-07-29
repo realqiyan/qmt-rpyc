@@ -25,6 +25,8 @@ CLIENT_TESTS=(
     "tests/test_protocol.py"
     "tests/test_client_exceptions.py"
     "tests/test_proxy.py"
+    "tests/test_config.py"
+    "tests/test_cli.py"
     "tests/test_auth_limiter.py"
     "tests/test_datetime_patch.py"
     "tests/test_event_bus.py"
@@ -38,6 +40,14 @@ cd "$PROJECT_DIR"
 # Make sure project root is on PYTHONPATH so server/ modules
 # used by auth_limiter / datetime_patch / event_bus tests are
 # importable from a dev checkout.
-export PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$PROJECT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 
-python -m pytest "${CLIENT_TESTS[@]}" -v "$@"
+if [ -n "${PYTHON_EXE:-}" ]; then
+    TEST_PYTHON="$PYTHON_EXE"
+elif [ -x "$PROJECT_DIR/.venv/bin/python" ]; then
+    TEST_PYTHON="$PROJECT_DIR/.venv/bin/python"
+else
+    TEST_PYTHON="python"
+fi
+
+"$TEST_PYTHON" -m pytest "${CLIENT_TESTS[@]}" -v "$@"

@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from common.protocol import STATUS_OK, STATUS_ERROR
-from server.serializer import serialize
-from server.event_bus import event_bus
+from qmt_rpyc.protocol import STATUS_OK, STATUS_ERROR
+from qmt_rpyc.server.serializer import serialize
+from qmt_rpyc.server.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,12 @@ class ConnectionManager:
     # ── public entry points ────────────────────────────────────────
 
     def start(self):
-        """Initialize trader, connect, and begin heartbeat.  Safe to call once."""
+        """Initialize trader, connect, and begin heartbeat.
+
+        Returns True only when the initial QMT connection and optional account
+        subscription succeed. Runtime disconnects are still handled by the
+        heartbeat reconnection loop.
+        """
         self._init_trader()
         if self._trader is not None:
             if self.connect():
@@ -230,11 +235,12 @@ class ConnectionManager:
                             "timeout=%ds, max_failures=%d)",
                             self._heartbeat_interval, self._heartbeat_timeout,
                             self._heartbeat_max_failures)
+                return True
             else:
-                logger.warning("QMT initial connection failed — scheduling reconnect")
-                self.schedule_reconnect()
+                logger.error("QMT initial connection failed")
         else:
-            logger.warning("xtquant not available — trader is None")
+            logger.error("xtquant not available — trader is None")
+        return False
 
     def stop(self):
         """Graceful shutdown: stop heartbeat, cancel reconnect, stop trader."""

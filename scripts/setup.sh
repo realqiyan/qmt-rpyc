@@ -58,7 +58,7 @@ echo ""
 echo "[3/3] Installing client dependencies..."
 
 "$VENV_PYTHON" -m pip install --upgrade pip -q
-"$VENV_PYTHON" -m pip install -r requirements-client.txt -q
+"$VENV_PYTHON" -m pip install -e "$PROJECT_ROOT" -q
 echo "        Done."
 
 # --- done ---------------------------------------------------------------------
@@ -67,9 +67,9 @@ echo "============================================================"
 echo " Setup complete."
 echo ""
 echo " Usage from Python:"
-echo "   from client import QmtClient"
+echo "   from qmt_rpyc import QmtClient"
 echo "   c = QmtClient.connect('SERVER_IP', port=18812,"
-echo "                          auth_key='your-secret-key')"
+echo "                          auth_key='your-secret-key-123456')"
 echo ""
 echo " Activate venv:  source $VENV_DIR/bin/activate"
 echo "============================================================"

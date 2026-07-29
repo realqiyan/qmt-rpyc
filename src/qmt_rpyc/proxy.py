@@ -4,7 +4,7 @@ import types
 
 import rpyc
 
-from client.exceptions import _map_error
+from qmt_rpyc.exceptions import _map_error
 
 logger = logging.getLogger(__name__)
 

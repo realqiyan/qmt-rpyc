@@ -24,7 +24,7 @@ def mock_xtquant():
 
 class TestConnectionManager:
     def test_discovers_runtime_account_parameter(self, mock_xtquant):
-        from server.connection import _discover_account_parameters
+        from qmt_rpyc.server.connection import _discover_account_parameters
         from xtquant.xttrader import XtQuantTrader
 
         discovered = _discover_account_parameters(XtQuantTrader)
@@ -34,7 +34,7 @@ class TestConnectionManager:
         assert "echo_account_id" not in discovered
 
     def test_init_and_connect(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
         assert cm.trader is not None
@@ -43,14 +43,14 @@ class TestConnectionManager:
         cm.stop()
 
     def test_connect_no_trader(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="", session_id=1, account_id="")
         cm._init_trader()
         assert cm.connect() is False
         cm.stop()
 
     def test_health_status(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
         cm.connect()
@@ -63,7 +63,7 @@ class TestConnectionManager:
         cm.stop()
 
     def test_mark_disconnected(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm.HEARTBEAT_INTERVAL = 0.1
         cm._init_trader()
@@ -74,7 +74,7 @@ class TestConnectionManager:
         cm.stop()
 
     def test_call_trader_method_success(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
         cm.connect()
@@ -84,7 +84,7 @@ class TestConnectionManager:
         cm.stop()
 
     def test_call_trader_method_not_connected(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="", session_id=1, account_id="")
         result = cm.call_trader_method("order_stock", ["ACC1", "600000.SH", 23, 100, 5, 10.0], {})
         assert result["status"] == "error"
@@ -92,7 +92,7 @@ class TestConnectionManager:
 
     def test_initialized_trader_rejects_calls_before_connect(
             self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
         try:
@@ -105,7 +105,7 @@ class TestConnectionManager:
 
     def test_reconnect_subscribes_once_and_preserves_attempt_count(
             self, mock_xtquant, monkeypatch):
-        import server.connection as connection
+        import qmt_rpyc.server.connection as connection
 
         cm = connection.ConnectionManager(
             path="test", session_id=1, account_id="ACC1")
@@ -131,7 +131,7 @@ class TestConnectionManager:
 
     def test_heartbeat_timeout_does_not_hold_state_lock(
             self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
 
         release = threading.Event()
         cm = ConnectionManager(
@@ -152,7 +152,7 @@ class TestConnectionManager:
             cm.stop()
 
     def test_reset_replaces_native_lock_generation(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
 
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
@@ -180,7 +180,7 @@ class TestConnectionManager:
             cm.stop()
 
     def test_account_wrapping(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
         cm.connect()
@@ -191,7 +191,7 @@ class TestConnectionManager:
 
     def test_legacy_account_wrapping_fallback(
             self, mock_xtquant, monkeypatch):
-        import server.connection as connection
+        import qmt_rpyc.server.connection as connection
         monkeypatch.setattr(
             connection, "_discover_account_parameters", lambda trader_cls: {})
         cm = connection.ConnectionManager(
@@ -205,7 +205,7 @@ class TestConnectionManager:
         cm.stop()
 
     def test_discovered_account_wrapping_positional(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
         assert cm.connect() is True
@@ -216,7 +216,7 @@ class TestConnectionManager:
         cm.stop()
 
     def test_discovered_account_wrapping_keyword(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
         assert cm.connect() is True
@@ -227,7 +227,7 @@ class TestConnectionManager:
         cm.stop()
 
     def test_stock_account_passes_through(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         from xtquant.xttype import StockAccount
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
@@ -240,7 +240,7 @@ class TestConnectionManager:
         cm.stop()
 
     def test_account_id_parameter_is_not_wrapped(self, mock_xtquant):
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
         cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
         cm._init_trader()
         assert cm.connect() is True
@@ -252,7 +252,7 @@ class TestConnectionManager:
     def test_account_construction_failure_is_structured(
             self, mock_xtquant, monkeypatch):
         from tests import _xtquant_mock
-        from server.connection import ConnectionManager
+        from qmt_rpyc.server.connection import ConnectionManager
 
         class BrokenStockAccount:
             def __init__(self, account_id):

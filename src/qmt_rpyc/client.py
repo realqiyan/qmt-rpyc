@@ -1,14 +1,19 @@
 import os
-import secrets
-import time
+import socket
 import threading
 import logging
 
 import rpyc
+from rpyc.core.stream import SocketStream
 
-from common.protocol import make_auth_token
-from client.proxy import _RemoteModule, _RemoteTrader, DownloadTaskHandle
-from client.exceptions import NotConnectedError, QmtAuthError, _map_error
+from qmt_rpyc.protocol import (
+    API_SURFACE_SCHEMA_VERSION,
+    PROTOCOL_VERSION,
+    SocketAuthError,
+    authenticate_client_socket,
+)
+from qmt_rpyc.proxy import _RemoteModule, _RemoteTrader, DownloadTaskHandle
+from qmt_rpyc.exceptions import NotConnectedError, QmtAuthError, _map_error
 
 logger = logging.getLogger(__name__)
 
@@ -92,25 +97,39 @@ class QmtClient:
             "sync_request_timeout": timeout,
             **protocol_config,
         }
-        if tls_config:
-            import ssl
-            config["credentials"] = ssl.create_default_context(
-                cafile=tls_config.get("ca_certs"))
-            if tls_config.get("certfile"):
-                config["credentials"].load_cert_chain(
-                    certfile=tls_config["certfile"],
-                    keyfile=tls_config.get("keyfile"))
-
-        conn = rpyc.connect(host, port, config=config)
+        sock = None
+        conn = None
         try:
+            sock = socket.create_connection((host, port), timeout=timeout)
+            if tls_config:
+                import ssl
+                context = ssl.create_default_context(
+                    cafile=tls_config.get("ca_certs"))
+                if tls_config.get("certfile"):
+                    context.load_cert_chain(
+                        certfile=tls_config["certfile"],
+                        keyfile=tls_config.get("keyfile"))
+                sock = context.wrap_socket(sock, server_hostname=host)
+            if auth_key is not None:
+                authenticate_client_socket(sock, auth_key)
+            conn = rpyc.connect_stream(SocketStream(sock), config=config)
+            sock = None
             client = cls()
             client._conn = conn
-            client._authenticate(auth_key)
             client._init_surface()
             return client
+        except SocketAuthError as e:
+            if conn is not None:
+                conn.close()
+            elif sock is not None:
+                sock.close()
+            raise QmtAuthError("Auth", str(e)) from e
         except Exception:
             try:
-                conn.close()
+                if conn is not None:
+                    conn.close()
+                elif sock is not None:
+                    sock.close()
             except Exception:
                 logger.warning(
                     "Failed to close RPyC connection after connect error",
@@ -118,18 +137,42 @@ class QmtClient:
                 )
             raise
 
-    def _authenticate(self, auth_key):
-        if auth_key is None:
-            return
-        nonce = secrets.token_hex(8)
-        timestamp = int(time.time())
-        token = make_auth_token(auth_key, nonce, timestamp)
-        ok = self._conn.root.authenticate(nonce, timestamp, token)
-        if not ok:
-            raise QmtAuthError("Auth", "authentication failed")
+    @classmethod
+    def connect_profile(cls, name="default", **overrides):
+        from qmt_rpyc.config import resolve_profile
+
+        profile = resolve_profile(name, overrides)
+        tls_config = {
+            key: profile.get(key)
+            for key in ("ca_certs", "certfile", "keyfile")
+            if profile.get(key)
+        }
+        return cls.connect(
+            profile["host"],
+            port=profile["port"],
+            auth_key=profile.get("auth_key"),
+            timeout=profile["timeout"],
+            tls_config=tls_config or None,
+        )
 
     def _init_surface(self):
         self._surface = rpyc.classic.obtain(self._conn.root.get_api_surface())
+        protocol_version = self._surface.get("protocol_version")
+        if protocol_version != PROTOCOL_VERSION:
+            raise QmtAuthError(
+                "ProtocolVersion",
+                "protocol mismatch: client={}, server={}".format(
+                    PROTOCOL_VERSION, protocol_version
+                ),
+            )
+        schema_version = self._surface.get("schema_version")
+        if schema_version != API_SURFACE_SCHEMA_VERSION:
+            raise QmtAuthError(
+                "SchemaVersion",
+                "API surface schema mismatch: client={}, server={}".format(
+                    API_SURFACE_SCHEMA_VERSION, schema_version
+                ),
+            )
         self._xtdata = _RemoteModule(self, "xtdata", self._surface.get("xtdata", {}))
         self._trader = _RemoteTrader(self, self._surface.get("XtQuantTrader", {}))
         self._xtconstant = _RemoteModule(self, "xtconstant", self._surface.get("xtconstant", {}))
@@ -204,6 +247,16 @@ class QmtClient:
         conn = self._ensure_connected()
         return rpyc.classic.obtain(conn.root.health())
 
+    def query_download(self, task_id):
+        conn = self._ensure_connected()
+        result = rpyc.classic.obtain(conn.root.query_download(task_id))
+        if result.get("status") != "ok":
+            raise _map_error(result)
+        return result["data"]
+
+    def download_handle(self, task_id):
+        return DownloadTaskHandle(self, task_id)
+
     def subscribe(self, event_types, account_id=None, on_event=None, poll_interval=1.0):
         if poll_interval <= 0:
             raise ValueError("poll_interval must be greater than 0")
@@ -270,6 +323,6 @@ class QmtClient:
             dict with keys: total, passed, failed, skipped,
             duration_seconds, results (list of per-test dicts).
         """
-        from client.self_test import run_self_test
+        from qmt_rpyc.self_test import run_self_test
         return run_self_test(self, test_symbols=test_symbols,
                              timeout=timeout)

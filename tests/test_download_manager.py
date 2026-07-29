@@ -1,6 +1,6 @@
 import time
 import pytest
-from server.download_manager import DownloadTaskManager, DownloadTask, is_download_function
+from qmt_rpyc.server.download_manager import DownloadTaskManager, DownloadTask, is_download_function
 
 
 class TestIsDownloadFunction:

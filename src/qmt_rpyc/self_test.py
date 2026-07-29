@@ -403,7 +403,7 @@ def run_self_test(client, test_symbols=None, timeout=30.0):
     if test_symbols:
         symbols.update(test_symbols)
 
-    from client.proxy import DownloadTaskHandle
+    from qmt_rpyc.proxy import DownloadTaskHandle
 
     results = []
     passed = failed = skipped = 0

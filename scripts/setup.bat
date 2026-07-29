@@ -90,7 +90,7 @@ echo.
 echo [3/4] Installing server dependencies...
 
 %VENV_PYTHON% -m pip install --upgrade pip -q
-%VENV_PYTHON% -m pip install -r requirements-server.txt -q
+%VENV_PYTHON% -m pip install -e ".[server]" -q
 if %errorlevel% neq 0 (
     echo [ERROR] pip install failed.
     pause
@@ -102,7 +102,9 @@ REM --- 4. environment self-check (auto-wires xtquant, configures .env) --------
 echo.
 echo [4/4] Environment self-check (env_check.py)...
 
-%VENV_PYTHON% scripts\env_check.py
+%VENV_PYTHON% -m qmt_rpyc.cli.server --config "%CD%\.env" init
+if %errorlevel% neq 0 exit /b 1
+%VENV_PYTHON% -m qmt_rpyc.cli.server --config "%CD%\.env" check
 if %errorlevel% neq 0 (
     echo.
     echo [WARN]  Some checks did not pass. See details above.

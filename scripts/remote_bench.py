@@ -2,7 +2,7 @@
 """Remote client benchmark for qmt-rpyc batch performance.
 
 Usage:
-    pip install qmt-rpyc-client              # first time only
+    pip install qmt-rpyc                     # first time only
     python remote_bench.py                   # uses env vars below
     python remote_bench.py 192.168.1.100     # pass server IP as arg
 
@@ -46,10 +46,10 @@ def main():
     # ── connect ───────────────────────────────────────────────────
     t0 = time.time()
     try:
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
     except ImportError:
-        print("\nERROR: qmt-rpyc-client not installed.")
-        print("  pip install qmt-rpyc-client")
+        print("\nERROR: qmt-rpyc not installed.")
+        print("  pip install qmt-rpyc")
         sys.exit(1)
 
     try:

@@ -1,6 +1,7 @@
 import time
 import pytest
-from common.protocol import (
+from qmt_rpyc.protocol import (
+    API_SURFACE_SCHEMA_VERSION, PROTOCOL_VERSION,
     make_auth_token, verify_auth_token,
     STATUS_OK, STATUS_ERROR, AUTH_TIMESTAMP_WINDOW, EVENT_TYPES,
 )
@@ -43,8 +44,11 @@ class TestAuthProtocol:
         assert verify_auth_token(
             "secret-key", nonce, timestamp, token) is False
 
-
 class TestConstants:
+    def test_protocol_versions_are_explicit(self):
+        assert PROTOCOL_VERSION == 1
+        assert API_SURFACE_SCHEMA_VERSION == 1
+
     def test_status_constants(self):
         assert STATUS_OK == "ok"
         assert STATUS_ERROR == "error"

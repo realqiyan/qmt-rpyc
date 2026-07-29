@@ -1,9 +1,44 @@
 import inspect
 
+from qmt_rpyc.protocol import (
+    API_SURFACE_SCHEMA_VERSION,
+    PROTOCOL_VERSION,
+)
+from qmt_rpyc.version import __version__
+
+
+def _owner_modules(obj):
+    names = set()
+    module_name = getattr(obj, "__name__", None)
+    if isinstance(module_name, str):
+        names.add(module_name)
+    class_module = getattr(type(obj), "__module__", None)
+    if isinstance(class_module, str) and class_module != "builtins":
+        names.add(class_module)
+    object_module = getattr(obj, "__module__", None)
+    if isinstance(object_module, str):
+        names.add(object_module)
+    return names
+
+
+def _is_public_api_callable(obj, name):
+    if name.startswith("_"):
+        return False
+    value = getattr(obj, name, None)
+    if not callable(value) or inspect.isclass(value):
+        return False
+    origin = getattr(value, "__module__", None)
+    if not origin:
+        return True
+    return any(
+        origin == owner or origin.startswith(owner + ".")
+        for owner in _owner_modules(obj)
+    )
+
 
 def _public_callables(obj):
-    return [n for n in dir(obj)
-            if not n.startswith("_") and callable(getattr(obj, n, None))]
+    return [name for name in dir(obj)
+            if _is_public_api_callable(obj, name)]
 
 
 def _func_meta(fn):
@@ -54,6 +89,9 @@ def build_api_surface():
         classes = []
 
     return {
+        "package_version": __version__,
+        "protocol_version": PROTOCOL_VERSION,
+        "schema_version": API_SURFACE_SCHEMA_VERSION,
         "xtdata": {
             "module_name": "xtquant.xtdata",
             "functions": xtdata_funcs,

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Callable
 
-from server.serializer import serialize
+from qmt_rpyc.server.serializer import serialize
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,20 @@ class DownloadTaskManager:
         with self._lock:
             task = self._tasks.get(task_id)
             return task.to_dict() if task else None
+
+    def get_stats(self):
+        with self._lock:
+            counts = {
+                "total": len(self._tasks),
+                "started": 0,
+                "running": 0,
+                "completed": 0,
+                "failed": 0,
+            }
+            for task in self._tasks.values():
+                if task.status in counts:
+                    counts[task.status] += 1
+            return counts
 
     def shutdown(self):
         with self._lock:

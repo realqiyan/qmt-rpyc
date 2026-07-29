@@ -6,36 +6,18 @@ import threading
 
 import rpyc
 
-from common.protocol import (
-    AUTH_TIMESTAMP_WINDOW,
+from qmt_rpyc.protocol import (
     EVENT_TYPES,
-    verify_auth_token,
     STATUS_OK,
     STATUS_ERROR,
 )
-from server.auth_limiter import rate_limiter
-from server.event_bus import event_bus
-from server.download_manager import is_download_function
-from server.serializer import serialize
+from qmt_rpyc.version import __version__
+from qmt_rpyc.protocol import PROTOCOL_VERSION
+from qmt_rpyc.server.event_bus import event_bus
+from qmt_rpyc.server.download_manager import is_download_function
+from qmt_rpyc.server.serializer import serialize
 
 logger = logging.getLogger(__name__)
-_auth_nonces = {}
-_auth_nonce_lock = threading.Lock()
-
-
-def _consume_auth_nonce(nonce):
-    now = time.time()
-    with _auth_nonce_lock:
-        expired = [
-            value for value, expires_at in _auth_nonces.items()
-            if expires_at <= now
-        ]
-        for value in expired:
-            _auth_nonces.pop(value, None)
-        if nonce in _auth_nonces:
-            return False
-        _auth_nonces[nonce] = now + AUTH_TIMESTAMP_WINDOW
-        return True
 
 # ── argument / return-value summarizers for logging ──────────────────
 
@@ -170,11 +152,12 @@ class QmtAuthError(Exception):
 
 
 class XtquantService(rpyc.Service):
-    _auth_key = None
     _require_auth = True
     _connection_mgr = None
     _download_mgr = None
     _api_surface = None
+    _active_clients = 0
+    _active_clients_lock = threading.Lock()
 
     @classmethod
     def get_service_name(cls):
@@ -186,14 +169,25 @@ class XtquantService(rpyc.Service):
         self._subscription_ids = set()
 
     def on_connect(self, conn):
+        credentials = conn._config.get("credentials") or {}
+        self._authenticated = (
+            not self.__class__._require_auth
+            or credentials.get("authenticated") is True
+        )
         try:
             self._peer = conn._channel.stream.sock.getpeername()
         except Exception:
             self._peer = ("unknown", 0)
+        with self.__class__._active_clients_lock:
+            self.__class__._active_clients += 1
         logger.info("Client connected from %s", self._peer)
 
     def on_disconnect(self, conn):
         logger.info("Client %s disconnected", self._peer)
+        with self.__class__._active_clients_lock:
+            self.__class__._active_clients = max(
+                0, self.__class__._active_clients - 1
+            )
         for sub_id in list(self._subscription_ids):
             event_bus.unsubscribe(sub_id)
         self._subscription_ids.clear()
@@ -210,24 +204,10 @@ class XtquantService(rpyc.Service):
         else:
             logger.log(level, "[%s] %s", peer, method)
 
-    def exposed_authenticate(self, nonce, timestamp, token):
-        ip = self._peer[0] if self._peer else "unknown"
-        self._log_request("authenticate", "ip=%s" % ip)
-        if rate_limiter.is_locked(ip):
-            logger.warning("[%s] authenticate blocked by rate limiter", ip)
-            return False
-        ok = verify_auth_token(
-            self.__class__._auth_key, nonce, timestamp, token)
-        if ok:
-            ok = _consume_auth_nonce(nonce)
-        if ok:
-            self._authenticated = True
-            rate_limiter.record_success(ip)
-            logger.info("[%s] authenticate OK", ip)
-        else:
-            rate_limiter.record_failure(ip)
-            logger.warning("[%s] authenticate FAILED", ip)
-        return ok
+    @classmethod
+    def _allowed_names(cls, surface, key):
+        descriptor = (cls._api_surface or {}).get(surface, {})
+        return descriptor.get(key, {})
 
     def exposed_get_api_surface(self):
         self._require_authed()
@@ -242,7 +222,13 @@ class XtquantService(rpyc.Service):
             arg_str = "<summarize failed>"
         self._log_request("call_xtdata", "fn=%s(%s)" % (name, arg_str))
 
-        if is_download_function(name):
+        allowed = self._allowed_names("xtdata", "functions")
+        if name not in allowed:
+            result = _error(
+                "AttributeError",
+                f"xtdata function {name!r} is not in the API allowlist",
+            )
+        elif is_download_function(name):
             result = self._submit_download(name, args, kwargs)
         elif xtdata is None:
             result = {"status": STATUS_ERROR, "error_type": "ImportError",
@@ -295,12 +281,20 @@ class XtquantService(rpyc.Service):
     def exposed_call_trader(self, name, args, kwargs):
         self._require_authed()
         try:
-            arg_str = _summarize_args(args, kwargs)
+            arg_str = "args={!r}, kwargs={!r}".format(
+                list(args), dict(kwargs)
+            )
         except Exception:
             arg_str = "<summarize failed>"
         self._log_request("call_trader", "method=%s(%s)" % (name, arg_str))
+        allowed = self._allowed_names("XtQuantTrader", "methods")
         cm = self.__class__._connection_mgr
-        if cm is None:
+        if name not in allowed:
+            result = _error(
+                "AttributeError",
+                f"trader method {name!r} is not in the API allowlist",
+            )
+        elif cm is None:
             result = {"status": STATUS_ERROR, "error_type": "NotConnected",
                       "error_message": "connection manager not configured"}
         else:
@@ -315,7 +309,7 @@ class XtquantService(rpyc.Service):
                 )
                 result = _error(type(e).__name__, str(e))
         try:
-            result_summary = _summarize_rpc_result(result)
+            result_summary = repr(result)
         except Exception:
             result_summary = "<summarize failed>"
         self._log_request("call_trader", "method=%s => %s" % (name, result_summary))
@@ -326,8 +320,16 @@ class XtquantService(rpyc.Service):
         self._log_request("health", level=logging.DEBUG)
         cm = self.__class__._connection_mgr
         if cm is None:
-            return {"connected": False, "trader_available": False}
-        return cm.get_health_status()
+            result = {"connected": False, "trader_available": False}
+        else:
+            result = cm.get_health_status()
+        with self.__class__._active_clients_lock:
+            result["active_clients"] = self.__class__._active_clients
+        dm = self.__class__._download_mgr
+        result["download_tasks"] = dm.get_stats() if dm is not None else {}
+        result["package_version"] = __version__
+        result["protocol_version"] = PROTOCOL_VERSION
+        return result
 
     def exposed_subscribe_event(self, event_types, account_id=None):
         self._require_authed()
@@ -396,6 +398,13 @@ class XtquantService(rpyc.Service):
             return _error(
                 "TypeError",
                 f"calls must be a list or tuple, got {type(calls).__name__}",
+            )
+
+        allowed = self._allowed_names("xtdata", "functions")
+        if name not in allowed:
+            return _error(
+                "AttributeError",
+                f"xtdata function {name!r} is not in the API allowlist",
             )
 
         # ── early exit for empty batch ────────────────────────────

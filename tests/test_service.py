@@ -23,10 +23,10 @@ def mock_xtquant():
 
 @pytest.fixture
 def service(mock_xtquant):
-    from server.service import XtquantService
-    from server.connection import ConnectionManager
-    from server.download_manager import DownloadTaskManager
-    from server.api_surface import build_api_surface
+    from qmt_rpyc.server.service import XtquantService
+    from qmt_rpyc.server.connection import ConnectionManager
+    from qmt_rpyc.server.download_manager import DownloadTaskManager
+    from qmt_rpyc.server.api_surface import build_api_surface
 
     cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
     cm._init_trader()
@@ -80,10 +80,10 @@ class TestCallTrader:
         assert isinstance(result["data"], int)
 
     def test_call_not_connected(self, mock_xtquant):
-        from server.service import XtquantService
-        from server.connection import ConnectionManager
-        from server.download_manager import DownloadTaskManager
-        from server.api_surface import build_api_surface
+        from qmt_rpyc.server.service import XtquantService
+        from qmt_rpyc.server.connection import ConnectionManager
+        from qmt_rpyc.server.download_manager import DownloadTaskManager
+        from qmt_rpyc.server.api_surface import build_api_surface
 
         cm = ConnectionManager(path="", session_id=1, account_id="")
         dm = DownloadTaskManager(max_workers=1)
@@ -139,7 +139,7 @@ class TestEvents:
         service.exposed_unsubscribe_event(sub_id)
 
     def test_subscription_is_owned_by_service_instance(self, service):
-        from server.service import XtquantService
+        from qmt_rpyc.server.service import XtquantService
 
         sub_id = service.exposed_subscribe_event(["reconnect"])
         other = XtquantService()
@@ -154,14 +154,13 @@ class TestEvents:
 
 class TestAuth:
     def test_auth_required_blocks(self, mock_xtquant):
-        from server.service import XtquantService
-        from server.connection import ConnectionManager
-        from server.download_manager import DownloadTaskManager
-        from server.api_surface import build_api_surface
+        from qmt_rpyc.server.service import XtquantService
+        from qmt_rpyc.server.connection import ConnectionManager
+        from qmt_rpyc.server.download_manager import DownloadTaskManager
+        from qmt_rpyc.server.api_surface import build_api_surface
 
         cm = ConnectionManager(path="", session_id=1, account_id="")
         dm = DownloadTaskManager(max_workers=1)
-        XtquantService._auth_key = "secret"
         XtquantService._require_auth = True
         XtquantService._connection_mgr = cm
         XtquantService._download_mgr = dm
@@ -171,34 +170,6 @@ class TestAuth:
         with pytest.raises(Exception):
             svc.exposed_get_api_surface()
         dm.shutdown()
-
-    def test_auth_success(self, mock_xtquant):
-        from server.service import XtquantService
-        from server.connection import ConnectionManager
-        from server.download_manager import DownloadTaskManager
-        from server.api_surface import build_api_surface
-        from common.protocol import make_auth_token
-        import time
-
-        cm = ConnectionManager(path="", session_id=1, account_id="")
-        dm = DownloadTaskManager(max_workers=1)
-        key = "test-secret"
-        XtquantService._auth_key = key
-        XtquantService._require_auth = True
-        XtquantService._connection_mgr = cm
-        XtquantService._download_mgr = dm
-        XtquantService._api_surface = build_api_surface()
-        svc = XtquantService()
-        svc._peer = ("127.0.0.1", 12345)
-
-        nonce = "0123456789abcdef"
-        ts = int(time.time())
-        token = make_auth_token(key, nonce, ts)
-        assert svc.exposed_authenticate(nonce, ts, token) is True
-        assert svc.exposed_get_api_surface() is not None
-        assert svc.exposed_authenticate(nonce, ts, token) is False
-        dm.shutdown()
-
 
 class TestBatchCallXtdata:
     def test_batch_success(self, service):
@@ -253,7 +224,7 @@ class TestBatchCallXtdata:
 
     def test_batch_too_large(self, service):
         """Exceeding _BATCH_MAX_CALLS (500) returns BatchTooLarge."""
-        from server.service import _BATCH_MAX_CALLS
+        from qmt_rpyc.server.service import _BATCH_MAX_CALLS
         calls = [(["test"], {})] * (_BATCH_MAX_CALLS + 1)
         result = service.exposed_batch_call_xtdata(
             "get_instrument_detail", calls)

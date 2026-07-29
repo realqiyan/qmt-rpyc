@@ -1,5 +1,5 @@
 import pytest
-from client.exceptions import (
+from qmt_rpyc.exceptions import (
     QmtError, NotConnectedError, RemoteCallError, QmtAuthError, _map_error,
 )
 

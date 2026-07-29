@@ -14,11 +14,12 @@ import sys
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+_SOURCE_ROOT = _PROJECT_ROOT / "src"
+if str(_SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SOURCE_ROOT))
 
 # This must be imported before xtquant on Python versions that need the patch.
-import server.datetime_patch  # noqa: E402, F401
+import qmt_rpyc.server.datetime_patch  # noqa: E402, F401
 
 
 def _get_xtquant_version():
@@ -39,7 +40,7 @@ def _remove_docs(surface):
 
 
 def build_dump(include_docs=True):
-    from server.api_surface import build_api_surface
+    from qmt_rpyc.server.api_surface import build_api_surface
 
     surface = build_api_surface()
     if not include_docs:

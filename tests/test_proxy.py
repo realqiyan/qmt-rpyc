@@ -1,5 +1,5 @@
 import pytest
-from client.proxy import (
+from qmt_rpyc.proxy import (
     _RemoteCallable, _RemoteModule, _RemoteTrader, DownloadTaskHandle,
 )
 

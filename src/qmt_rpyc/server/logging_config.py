@@ -3,7 +3,20 @@ from logging.handlers import TimedRotatingFileHandler
 import os
 
 
-def setup_logging(log_dir="logs"):
+class _ConsoleFilter(logging.Filter):
+    def filter(self, record):
+        if record.levelno >= logging.WARNING:
+            return True
+        if record.name != "qmt_rpyc.server.service":
+            return True
+        message = record.getMessage()
+        return (
+            message.startswith("Client connected")
+            or message.startswith("Client ")
+        )
+
+
+def setup_logging(log_dir="logs", verbose=False):
     root = logging.getLogger()
     for handler in root.handlers:
         if getattr(handler, "_qmt_rpyc_handler", False):
@@ -19,10 +32,12 @@ def setup_logging(log_dir="logs"):
     file_handler.setFormatter(fmt)
 
     console = logging.StreamHandler()
-    console.setLevel(logging.WARNING)
+    console.setLevel(logging.DEBUG if verbose else logging.INFO)
     console.setFormatter(fmt)
+    if not verbose:
+        console.addFilter(_ConsoleFilter())
 
-    root.setLevel(logging.INFO)
+    root.setLevel(logging.DEBUG if verbose else logging.INFO)
     file_handler._qmt_rpyc_handler = True
     console._qmt_rpyc_handler = True
     root.addHandler(file_handler)

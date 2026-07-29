@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from server.serializer import serialize
+from qmt_rpyc.server.serializer import serialize
 
 
 class TestPrimitives:

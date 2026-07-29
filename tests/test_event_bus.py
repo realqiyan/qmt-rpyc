@@ -1,5 +1,5 @@
 import pytest
-from server.event_bus import EventBus, Subscription, _MAX_EVENTS_PER_SUB
+from qmt_rpyc.server.event_bus import EventBus, Subscription, _MAX_EVENTS_PER_SUB
 
 
 class TestSubscription:

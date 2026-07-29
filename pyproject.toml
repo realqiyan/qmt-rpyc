@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qmt-rpyc"
+dynamic = ["version"]
+description = "Cross-platform RPyC bridge for QMT/MiniQMT xtquant"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [{name = "qmt-rpyc contributors"}]
+keywords = ["qmt", "miniqmt", "xtquant", "rpyc", "trading"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "rpyc>=6.0,<7",
+    "platformdirs>=3.0",
+    "tomli>=2.0; python_version < '3.11'",
+    "tomli-w>=1.0",
+    "keyring>=25,<25.6; python_version < '3.9'",
+    "keyring>=25.6; python_version >= '3.9'",
+]
+
+[project.optional-dependencies]
+server = [
+    "python-dotenv>=1.0; python_version >= '3.10' and python_version < '3.12'",
+    "numpy>=1.24,<2; python_version >= '3.10' and python_version < '3.12'",
+    "pandas>=2,<3; python_version >= '3.10' and python_version < '3.12'",
+    "psutil>=5; python_version >= '3.10' and python_version < '3.12'",
+]
+dev = [
+    "build>=1",
+    "pytest>=8",
+    "twine>=5",
+]
+
+[project.urls]
+Homepage = "https://github.com/realqiyan/qmt-rpyc"
+Repository = "https://github.com/realqiyan/qmt-rpyc"
+Issues = "https://github.com/realqiyan/qmt-rpyc/issues"
+
+[project.scripts]
+qmt-rpyc-client = "qmt_rpyc.cli.client:main"
+qmt-rpyc-server = "qmt_rpyc.cli.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "qmt_rpyc.version.__version__"}
+
+[tool.setuptools.package-data]
+qmt_rpyc = ["py.typed"]

@@ -5,12 +5,12 @@ import pytest
 
 class TestDatetimePatch:
     def test_needs_patch_flag_exists(self):
-        from server.datetime_patch import _NEEDS_PATCH, _PATCHED
+        from qmt_rpyc.server.datetime_patch import _NEEDS_PATCH, _PATCHED
         assert isinstance(_NEEDS_PATCH, bool)
         assert isinstance(_PATCHED, bool)
 
     def test_patched_when_needed(self):
-        from server.datetime_patch import _NEEDS_PATCH, _PATCHED
+        from qmt_rpyc.server.datetime_patch import _NEEDS_PATCH, _PATCHED
         if _NEEDS_PATCH:
             assert _PATCHED is True
         else:

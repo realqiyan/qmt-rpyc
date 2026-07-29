@@ -2,14 +2,14 @@ import ssl
 
 import pytest
 
-from server.main import _validate_config, start_server
+from qmt_rpyc.server.main import _validate_config, start_server
 
 
 def _config(**overrides):
     config = {
         "host": "127.0.0.1",
         "port": 18812,
-        "auth_key": "secret",
+        "auth_key": "secret-key-123456",
         "allow_insecure": False,
         "qmt_path": "test",
         "qmt_session_id": 1,
@@ -33,6 +33,9 @@ def test_config_requires_auth_unless_explicitly_insecure():
 
     _validate_config(_config(auth_key=None, allow_insecure=True))
 
+    with pytest.raises(ValueError, match="at least 16 bytes"):
+        _validate_config(_config(auth_key="too-short"))
+
 
 def test_config_requires_complete_tls_pair():
     with pytest.raises(ValueError, match="configured together"):
@@ -41,9 +44,9 @@ def test_config_requires_complete_tls_pair():
 
 def test_tls_uses_server_context_and_cleanup_order(monkeypatch):
     import socket
-    import server.api_surface
-    import server.connection
-    import server.download_manager
+    import qmt_rpyc.server.api_surface as api_surface
+    import qmt_rpyc.server.connection as connection
+    import qmt_rpyc.server.download_manager as download_manager
     import rpyc.utils.server
 
     calls = []
@@ -54,6 +57,8 @@ def test_tls_uses_server_context_and_cleanup_order(monkeypatch):
 
         def start(self):
             calls.append("cm.start")
+            self.is_connected = True
+            return True
 
         def stop(self):
             calls.append("cm.stop")
@@ -100,10 +105,10 @@ def test_tls_uses_server_context_and_cleanup_order(monkeypatch):
             calls.append("server.close")
 
     monkeypatch.setattr(
-        server.connection, "ConnectionManager", FakeConnectionManager)
+        connection, "ConnectionManager", FakeConnectionManager)
     monkeypatch.setattr(
-        server.download_manager, "DownloadTaskManager", FakeDownloadManager)
-    monkeypatch.setattr(server.api_surface, "build_api_surface", lambda: {})
+        download_manager, "DownloadTaskManager", FakeDownloadManager)
+    monkeypatch.setattr(api_surface, "build_api_surface", lambda: {})
     monkeypatch.setattr(rpyc.utils.server, "ThreadedServer", FakeServer)
     monkeypatch.setattr(socket, "socket", lambda *args: FakeSocket())
     monkeypatch.setattr(ssl, "SSLContext", FakeContext)

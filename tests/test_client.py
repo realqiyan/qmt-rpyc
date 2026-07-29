@@ -17,10 +17,10 @@ def mock_server():
     sys.modules["xtquant.xttype"] = _xtquant_mock
     sys.modules["xtquant.xtconstant"] = _xtquant_mock.xtconstant
 
-    from server.service import XtquantService
-    from server.connection import ConnectionManager
-    from server.download_manager import DownloadTaskManager
-    from server.api_surface import build_api_surface
+    from qmt_rpyc.server.service import XtquantService
+    from qmt_rpyc.server.connection import ConnectionManager
+    from qmt_rpyc.server.download_manager import DownloadTaskManager
+    from qmt_rpyc.server.api_surface import build_api_surface
     from rpyc.utils.server import ThreadedServer
 
     cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
@@ -28,7 +28,6 @@ def mock_server():
     cm.connect()
     dm = DownloadTaskManager(max_workers=1)
 
-    XtquantService._auth_key = None
     XtquantService._require_auth = False
     XtquantService._connection_mgr = cm
     XtquantService._download_mgr = dm
@@ -46,13 +45,13 @@ def mock_server():
     cm.stop()
     dm.shutdown()
     for mod in list(sys.modules.keys()):
-        if mod.startswith("xtquant") or mod.startswith("server."):
+        if mod.startswith("xtquant"):
             del sys.modules[mod]
 
 
 class TestQmtClientConnect:
     def test_connect_and_close(self, mock_server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         client = QmtClient.connect("127.0.0.1", port=18899)
         try:
             assert client is not None
@@ -60,8 +59,8 @@ class TestQmtClientConnect:
             client.close()
 
     def test_context_manager(self, mock_server):
-        from client import QmtClient
-        from client.exceptions import NotConnectedError
+        from qmt_rpyc import QmtClient
+        from qmt_rpyc.exceptions import NotConnectedError
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             assert client is not None
         with pytest.raises(NotConnectedError):
@@ -71,20 +70,20 @@ class TestQmtClientConnect:
 
 class TestQmtClientCall:
     def test_call_xtdata(self, mock_server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             result = client.xtdata.get_market_data([], ["600000.SH"], "1d")
             assert isinstance(result, dict)
             assert "600000.SH" in result
 
     def test_call_trader(self, mock_server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             order_id = client.trader.order_stock("ACC1", "600000.SH", 23, 100, 5, 10.0)
             assert isinstance(order_id, int)
 
     def test_call_dynamically_adapted_trader_method(self, mock_server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             assert "query_new_purchase_limit" in (
                 client._surface["XtQuantTrader"]["methods"])
@@ -96,12 +95,12 @@ class TestQmtClientCall:
             assert keyword_result["account_id"] == "ACC2"
 
     def test_xtconstant_inline(self, mock_server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             assert client.xtconstant.STOCK_BUY == 23
 
     def test_health(self, mock_server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             h = client.health()
             assert "connected" in h
@@ -109,8 +108,8 @@ class TestQmtClientCall:
 
 class TestQmtClientDownload:
     def test_download_returns_handle(self, mock_server):
-        from client import QmtClient
-        from client.proxy import DownloadTaskHandle
+        from qmt_rpyc import QmtClient
+        from qmt_rpyc.proxy import DownloadTaskHandle
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             task = client.xtdata.download_history_data(
                 stock_code="600000.SH", period="1d")
@@ -121,7 +120,7 @@ class TestQmtClientDownload:
 
 class TestQmtClientEvents:
     def test_subscribe_and_drain(self, mock_server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             sub_id = client.subscribe(["order"])
             events, dropped = client.drain_events(sub_id)
@@ -132,7 +131,7 @@ class TestQmtClientEvents:
 class TestQmtClientBatch:
     def test_batch_success(self, mock_server):
         """Batch call through client returns results in order."""
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             results = client.xtdata.get_instrument_detail.batch([
                 (["000001.SZ"], {}),
@@ -146,23 +145,23 @@ class TestQmtClientBatch:
 
     def test_batch_empty(self, mock_server):
         """Empty batch returns empty results list."""
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             results = client.xtdata.get_instrument_detail.batch([])
             assert len(results) == 0
 
     def test_batch_nonexistent_function(self, mock_server):
         """Non-existent function raises QmtError."""
-        from client import QmtClient
-        from client.exceptions import QmtError
+        from qmt_rpyc import QmtClient
+        from qmt_rpyc.exceptions import QmtError
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             with pytest.raises(QmtError):
                 client.xtdata.nonexistent_func.batch([([], {})])
 
     def test_batch_download_rejected(self, mock_server):
         """download_* rejected — overall batch fails, raises QmtError."""
-        from client import QmtClient
-        from client.exceptions import QmtError
+        from qmt_rpyc import QmtClient
+        from qmt_rpyc.exceptions import QmtError
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             with pytest.raises(QmtError):
                 client.xtdata.download_history_data.batch([
@@ -170,7 +169,71 @@ class TestQmtClientBatch:
 
     def test_batch_dir_discovers_batch(self, mock_server):
         """dir() on a remote callable includes 'batch'."""
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
             names = dir(client.xtdata.get_instrument_detail)
             assert "batch" in names
+
+
+def test_pre_protocol_authentication_preserves_obtain():
+    import sys
+    import threading
+
+    from tests import _xtquant_mock
+    sys.modules["xtquant"] = _xtquant_mock
+    sys.modules["xtquant.xtdata"] = _xtquant_mock.xtdata
+    sys.modules["xtquant.xttrader"] = _xtquant_mock
+    sys.modules["xtquant.xttype"] = _xtquant_mock
+    sys.modules["xtquant.xtconstant"] = _xtquant_mock.xtconstant
+
+    from rpyc.utils.server import ThreadedServer
+    from qmt_rpyc import QmtClient
+    from qmt_rpyc.protocol import make_server_authenticator
+    from qmt_rpyc.server.api_surface import build_api_surface
+    from qmt_rpyc.server.auth_limiter import AuthRateLimiter
+    from qmt_rpyc.server.connection import ConnectionManager
+    from qmt_rpyc.server.download_manager import DownloadTaskManager
+    from qmt_rpyc.server.service import XtquantService
+
+    manager = ConnectionManager(
+        path="test", session_id=1, account_id="ACC1"
+    )
+    manager._init_trader()
+    manager.connect()
+    downloads = DownloadTaskManager(max_workers=1)
+    XtquantService._require_auth = True
+    XtquantService._connection_mgr = manager
+    XtquantService._download_mgr = downloads
+    XtquantService._api_surface = build_api_surface()
+    server = ThreadedServer(
+        XtquantService,
+        hostname="127.0.0.1",
+        port=0,
+        authenticator=make_server_authenticator(
+            "test-secret", AuthRateLimiter()
+        ),
+        protocol_config={
+            "allow_public_attrs": True,
+            "allow_pickle": True,
+        },
+    )
+    port = server.listener.getsockname()[1]
+    thread = threading.Thread(target=server.start, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(Exception):
+            QmtClient.connect(
+                "127.0.0.1", port=port, auth_key="wrong-secret"
+            )
+        with QmtClient.connect(
+                "127.0.0.1", port=port,
+                auth_key="test-secret") as client:
+            health = client.health()
+            assert isinstance(health, dict)
+            assert health["connected"] is True
+    finally:
+        server.close()
+        downloads.shutdown()
+        manager.stop()
+        thread.join(timeout=2)
+        XtquantService._require_auth = False

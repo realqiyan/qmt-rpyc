@@ -17,10 +17,10 @@ def server():
     sys.modules["xtquant.xttype"] = _xtquant_mock
     sys.modules["xtquant.xtconstant"] = _xtquant_mock.xtconstant
 
-    from server.service import XtquantService
-    from server.connection import ConnectionManager
-    from server.download_manager import DownloadTaskManager
-    from server.api_surface import build_api_surface
+    from qmt_rpyc.server.service import XtquantService
+    from qmt_rpyc.server.connection import ConnectionManager
+    from qmt_rpyc.server.download_manager import DownloadTaskManager
+    from qmt_rpyc.server.api_surface import build_api_surface
     from rpyc.utils.server import ThreadedServer
 
     cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
@@ -28,7 +28,6 @@ def server():
     cm.connect()
     dm = DownloadTaskManager(max_workers=2)
 
-    XtquantService._auth_key = None
     XtquantService._require_auth = False
     XtquantService._connection_mgr = cm
     XtquantService._download_mgr = dm
@@ -46,38 +45,38 @@ def server():
     cm.stop()
     dm.shutdown()
     for mod in list(sys.modules.keys()):
-        if mod.startswith("xtquant") or mod.startswith("server."):
+        if mod.startswith("xtquant"):
             del sys.modules[mod]
 
 
 class TestEndToEnd:
     def test_connect_and_call_xtdata(self, server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18900) as client:
             result = client.xtdata.get_market_data([], ["600000.SH"], "1d")
             assert "600000.SH" in result
 
     def test_connect_and_call_trader(self, server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18900) as client:
             order_id = client.trader.order_stock("ACC1", "600000.SH", 23, 100, 5, 10.0)
             assert order_id >= 10000
 
     def test_constant_access(self, server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18900) as client:
             assert client.xtconstant.STOCK_BUY == 23
             assert client.xtconstant.STOCK_SELL == 24
 
     def test_health(self, server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18900) as client:
             h = client.health()
             assert h["connected"] is True
 
     def test_download_workflow(self, server):
-        from client import QmtClient
-        from client.proxy import DownloadTaskHandle
+        from qmt_rpyc import QmtClient
+        from qmt_rpyc.proxy import DownloadTaskHandle
         with QmtClient.connect("127.0.0.1", port=18900) as client:
             task = client.xtdata.download_history_data(
                 stock_code="600000.SH", period="1d")
@@ -86,20 +85,20 @@ class TestEndToEnd:
             assert result["status"] in ("completed", "failed")
 
     def test_query_nonexistent_trader_method(self, server):
-        from client import QmtClient
-        from client.exceptions import RemoteCallError
+        from qmt_rpyc import QmtClient
+        from qmt_rpyc.exceptions import RemoteCallError
         with QmtClient.connect("127.0.0.1", port=18900) as client:
             with pytest.raises(RemoteCallError):
                 client.trader.nonexistent_method("ACC1")
 
     def test_event_subscribe_unsubscribe(self, server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18900) as client:
             sub_id = client.subscribe(["order", "disconnect"])
             client.unsubscribe(sub_id)
 
     def test_multiple_clients(self, server):
-        from client import QmtClient
+        from qmt_rpyc import QmtClient
         c1 = QmtClient.connect("127.0.0.1", port=18900)
         c2 = QmtClient.connect("127.0.0.1", port=18900)
         try:
