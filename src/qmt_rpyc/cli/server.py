@@ -1,6 +1,5 @@
 """qmt-rpyc Windows server command-line interface."""
 
-import argparse
 import getpass
 import json
 import os
@@ -13,13 +12,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from qmt_rpyc import QmtClient
+from qmt_rpyc.cli.common import (
+    ArgumentParser,
+    add_version_argument,
+    emit_interrupted,
+)
 from qmt_rpyc.server.environment import (
     detect_environment,
     managed_xtquant_path,
     private_ipv4_addresses,
     wire_xtquant,
 )
-from qmt_rpyc.version import __version__
 
 
 FIREWALL_RULE = "qmt-rpyc server"
@@ -132,6 +135,14 @@ def _masked_summary(values):
     }
 
 
+def _next_command(args, command):
+    parts = ["qmt-rpyc-server"]
+    if args.config:
+        parts.extend(["--config", str(config_path(args.config))])
+    parts.append(command)
+    return subprocess.list2cmdline(parts)
+
+
 def _cmd_init(args):
     target = config_path(args.config)
     source = Path(args.import_env).expanduser() if args.import_env else None
@@ -190,9 +201,13 @@ def _cmd_init(args):
             ).strip().lower()
             if choice == "c":
                 auth_key = getpass.getpass("Custom authentication key: ")
-                if len(auth_key.encode("utf-8")) < 16:
+                if (
+                    not auth_key.strip()
+                    or auth_key == "your-secret-key-here"
+                ):
                     raise ValueError(
-                        "custom authentication key must be at least 16 bytes"
+                        "custom authentication key must not be empty or use "
+                        "the placeholder"
                     )
             else:
                 auth_key = candidate
@@ -250,6 +265,10 @@ def _cmd_init(args):
         "config_path": str(target),
         "summary": _masked_summary(values),
         "xtquant_wired": wired,
+        "next_steps": [
+            _next_command(args, "check"),
+            _next_command(args, "start"),
+        ],
     }
     if generated:
         result["auth_key_once"] = auth_key
@@ -259,10 +278,14 @@ def _cmd_init(args):
 def _validate_values(values):
     errors = []
     auth_key = values.get("QMT_RPYC_AUTH_KEY", "")
-    if not auth_key:
-        errors.append("QMT_RPYC_AUTH_KEY is missing")
-    elif len(auth_key.encode("utf-8")) < 16:
-        errors.append("QMT_RPYC_AUTH_KEY must be at least 16 bytes")
+    if (
+        not isinstance(auth_key, str)
+        or not auth_key.strip()
+        or auth_key == "your-secret-key-here"
+    ):
+        errors.append(
+            "QMT_RPYC_AUTH_KEY is missing or still uses the placeholder"
+        )
     if not values.get("QMT_PATH"):
         errors.append("QMT_PATH is missing")
     try:
@@ -349,8 +372,10 @@ def _cmd_check(args):
 
 def _cmd_start(args):
     from qmt_rpyc.server.main import main as server_main
-    server_main(str(config_path(args.config)), verbose=args.verbose)
-    return 0
+    return server_main(
+        str(config_path(args.config)),
+        verbose=args.verbose,
+    )
 
 
 def _client_from_server_config(path):
@@ -520,63 +545,278 @@ def _cmd_api_dump(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="qmt-rpyc-server")
-    parser.add_argument("--config")
-    parser.add_argument("--compact", action="store_true")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser = ArgumentParser(
+        prog="qmt-rpyc-server",
+        description=(
+            "Configure, validate, and run the qmt-rpyc server beside a "
+            "Windows QMT/MiniQMT installation."
+        ),
+        epilog="""Getting started (Windows, Python 3.10 or 3.11):
+  qmt-rpyc-server init
+  qmt-rpyc-server check
+  qmt-rpyc-server start
 
-    init = sub.add_parser("init")
-    init.add_argument("--import-env")
-    init.add_argument("--host")
-    init.add_argument("--port", type=int)
-    init.add_argument("--qmt-path")
-    init.add_argument("--account")
-    init.add_argument("--yes", action="store_true")
-    init.add_argument("--non-interactive", action="store_true")
+'start' runs in the foreground. Press Ctrl-C to shut down cleanly.
+Global options must appear before COMMAND. Run
+'qmt-rpyc-server COMMAND --help' for command-specific details.""",
+    )
+    add_version_argument(parser)
+    parser.add_argument(
+        "--config",
+        help=(
+            "server config.env path; must appear before COMMAND "
+            "(default: platform application-data directory)"
+        ),
+    )
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="emit compact single-line JSON; must appear before COMMAND",
+    )
+    sub = parser.add_subparsers(
+        dest="command",
+        required=True,
+        title="commands",
+        metavar="COMMAND",
+    )
+
+    init = sub.add_parser(
+        "init",
+        help="run the server configuration guide",
+        description=(
+            "Create or update config.env. The guide can import .env from the "
+            "current directory, detect MiniQMT and xtquant, and generate or "
+            "accept a shared authentication key."
+        ),
+        epilog="""Examples:
+  qmt-rpyc-server init
+  qmt-rpyc-server init --host 192.168.1.20 --account ACCOUNT_ID
+  qmt-rpyc-server --config D:\\qmt\\config.env init --import-env D:\\qmt\\.env
+  qmt-rpyc-server init --non-interactive --yes""",
+    )
+    init.add_argument(
+        "--import-env",
+        help="import initial values from this .env file",
+    )
+    init.add_argument("--host", help="server listen address")
+    init.add_argument("--port", type=int, help="server listen port")
+    init.add_argument(
+        "--qmt-path",
+        help="QMT userdata_mini directory",
+    )
+    init.add_argument(
+        "--account",
+        help="stock account ID; omit for market-data-only operation",
+    )
+    init.add_argument(
+        "--yes",
+        action="store_true",
+        help="accept safe defaults and detected configuration",
+    )
+    init.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="do not prompt; use arguments, detected values, and defaults",
+    )
     init.set_defaults(func=_cmd_init)
 
-    sub.add_parser("check").set_defaults(func=_cmd_check)
-    start = sub.add_parser("start")
-    start.add_argument("--verbose", action="store_true")
+    check = sub.add_parser(
+        "check",
+        help="run server configuration and QMT connection checks",
+        description=(
+            "Validate config.env, Python, MiniQMT, xtquant, the initial QMT "
+            "connection, and availability of the listen address."
+        ),
+        epilog="""Run this before each manual start:
+  qmt-rpyc-server check
+
+If configuration is missing or invalid, run:
+  qmt-rpyc-server init""",
+    )
+    check.set_defaults(func=_cmd_check)
+    start = sub.add_parser(
+        "start",
+        help="run the server in the foreground",
+        description=(
+            "Connect to QMT and run the RPyC server in the foreground so "
+            "startup and runtime messages remain visible."
+        ),
+        epilog="""Example:
+  qmt-rpyc-server start
+
+Press Ctrl-C once to stop accepting clients, close workers, disconnect from
+QMT, and return to the command prompt.""",
+    )
+    start.add_argument(
+        "--verbose",
+        action="store_true",
+        help="enable verbose server logging",
+    )
     start.set_defaults(func=_cmd_start)
-    sub.add_parser("status").set_defaults(func=_cmd_status)
-    path = sub.add_parser("config-path")
+    status = sub.add_parser(
+        "status",
+        help="query the health of a running local server",
+        description=(
+            "Connect using the server configuration and return the live "
+            "server health payload."
+        ),
+        epilog="""Example:
+  qmt-rpyc-server status""",
+    )
+    status.set_defaults(func=_cmd_status)
+    path = sub.add_parser(
+        "config-path",
+        help="print the effective server configuration path",
+        description="Print the config.env path selected by global options.",
+    )
     path.set_defaults(func=lambda args: _emit(
         {"config_path": str(config_path(args.config))}, args.compact
     ))
 
-    update = sub.add_parser("update")
-    update.add_argument("--pre", action="store_true")
+    update = sub.add_parser(
+        "update",
+        help="upgrade qmt-rpyc and re-run server checks",
+        description=(
+            "Back up config.env, upgrade qmt-rpyc[server] with the current "
+            "Python interpreter, then run the server checks."
+        ),
+        epilog="""Examples:
+  qmt-rpyc-server update
+  qmt-rpyc-server update --pre""",
+    )
+    update.add_argument(
+        "--pre",
+        action="store_true",
+        help="allow installation of a pre-release version",
+    )
     update.set_defaults(func=_cmd_update)
 
-    uninstall = sub.add_parser("uninstall")
-    uninstall.add_argument("--purge", action="store_true")
-    uninstall.add_argument("--yes", action="store_true")
+    uninstall = sub.add_parser(
+        "uninstall",
+        help="remove the managed server environment",
+        description=(
+            "Remove the managed virtual environment and launcher. "
+            "Configuration and logs remain unless --purge is supplied."
+        ),
+        epilog="""Examples:
+  qmt-rpyc-server uninstall
+  qmt-rpyc-server uninstall --purge --yes""",
+    )
+    uninstall.add_argument(
+        "--purge",
+        action="store_true",
+        help="also remove managed configuration and logs",
+    )
+    uninstall.add_argument(
+        "--yes",
+        action="store_true",
+        help="uninstall without asking for confirmation",
+    )
     uninstall.set_defaults(func=_cmd_uninstall)
 
-    firewall = sub.add_parser("firewall")
-    firewall_sub = firewall.add_subparsers(
-        dest="firewall_command", required=True
+    firewall = sub.add_parser(
+        "firewall",
+        help="manage the explicit Windows private-network firewall rule",
+        description=(
+            "Add or remove the qmt-rpyc inbound TCP rule for Windows private "
+            "networks. Administrator privileges are normally required."
+        ),
+        epilog="""Examples (run in an elevated terminal):
+  qmt-rpyc-server firewall add
+  qmt-rpyc-server firewall remove""",
     )
-    firewall_sub.add_parser("add")
-    firewall_sub.add_parser("remove")
+    firewall_sub = firewall.add_subparsers(
+        dest="firewall_command",
+        required=True,
+        title="firewall commands",
+        metavar="COMMAND",
+    )
+    firewall_sub.add_parser(
+        "add",
+        help="allow the configured TCP port on private networks",
+        description=(
+            "Add the qmt-rpyc inbound TCP rule for the configured port."
+        ),
+    )
+    firewall_sub.add_parser(
+        "remove",
+        help="remove the qmt-rpyc firewall rule",
+        description="Remove the qmt-rpyc Windows firewall rule.",
+    )
     firewall.set_defaults(func=_cmd_firewall)
 
-    xtquant = sub.add_parser("xtquant")
-    xtquant_sub = xtquant.add_subparsers(
-        dest="xtquant_command", required=True
+    xtquant = sub.add_parser(
+        "xtquant",
+        help="check or repair access to the deployed xtquant SDK",
+        description=(
+            "Inspect the managed xtquant link or wire the SDK discovered in "
+            "the local MiniQMT installation."
+        ),
+        epilog="""Examples:
+  qmt-rpyc-server xtquant check
+  qmt-rpyc-server xtquant repair""",
     )
-    xtquant_sub.add_parser("check")
-    repair = xtquant_sub.add_parser("repair")
-    repair.add_argument("--source")
+    xtquant_sub = xtquant.add_subparsers(
+        dest="xtquant_command",
+        required=True,
+        title="xtquant commands",
+        metavar="COMMAND",
+    )
+    xtquant_sub.add_parser(
+        "check",
+        help="verify that xtquant can be imported",
+        description="Report the imported xtquant location and version.",
+    )
+    repair = xtquant_sub.add_parser(
+        "repair",
+        help="wire the MiniQMT xtquant package into this environment",
+        description=(
+            "Create or repair the managed link to MiniQMT's xtquant package."
+        ),
+    )
+    repair.add_argument(
+        "--source",
+        help="site-packages directory containing xtquant; otherwise detect it",
+    )
     xtquant.set_defaults(func=_cmd_xtquant)
 
-    api = sub.add_parser("api")
-    api_sub = api.add_subparsers(dest="api_command", required=True)
-    dump = api_sub.add_parser("dump")
-    dump.add_argument("--output")
-    dump.add_argument("--without-docs", action="store_true")
-    dump.add_argument("--force", action="store_true")
+    api = sub.add_parser(
+        "api",
+        help="inspect the local deployed xtquant API surface",
+        description=(
+            "Discover the broker-customized local xtquant API and export its "
+            "metadata for diagnostics or compatibility review."
+        ),
+        epilog="""Example:
+  qmt-rpyc-server api dump --output api_surface.json""",
+    )
+    api_sub = api.add_subparsers(
+        dest="api_command",
+        required=True,
+        title="API commands",
+        metavar="COMMAND",
+    )
+    dump = api_sub.add_parser(
+        "dump",
+        help="write the discovered API surface to JSON",
+        description=(
+            "Discover the local API surface and write a portable JSON report."
+        ),
+    )
+    dump.add_argument(
+        "--output",
+        help="output JSON path",
+    )
+    dump.add_argument(
+        "--without-docs",
+        action="store_true",
+        help="omit function and method documentation",
+    )
+    dump.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite an existing output file",
+    )
     api.set_defaults(func=_cmd_api_dump)
     return parser
 
@@ -586,6 +826,24 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return args.func(args) or 0
+    except KeyboardInterrupt:
+        return emit_interrupted(
+            _emit, getattr(args, "compact", False)
+        )
+    except ModuleNotFoundError as e:
+        missing = (e.name or "").split(".", 1)[0]
+        payload = {
+            "status": "error",
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+        }
+        if missing in ("dotenv", "numpy", "pandas", "psutil"):
+            payload["hint"] = (
+                "Install server dependencies with: python -m pip install "
+                "\"qmt-rpyc[server]\". The server requires Python 3.10 or 3.11."
+            )
+        _emit(payload, getattr(args, "compact", False), sys.stderr)
+        return 1
     except Exception as e:
         _emit({
             "status": "error",

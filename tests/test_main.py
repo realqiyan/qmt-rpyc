@@ -27,14 +27,15 @@ def _config(**overrides):
     return config
 
 
-def test_config_requires_auth_unless_explicitly_insecure():
+def test_config_requires_nonempty_auth_unless_explicitly_insecure():
     with pytest.raises(ValueError, match="QMT_RPYC_AUTH_KEY"):
         _validate_config(_config(auth_key=None))
 
     _validate_config(_config(auth_key=None, allow_insecure=True))
+    _validate_config(_config(auth_key="short"))
 
-    with pytest.raises(ValueError, match="at least 16 bytes"):
-        _validate_config(_config(auth_key="too-short"))
+    with pytest.raises(ValueError, match="must be non-empty"):
+        _validate_config(_config(auth_key=""))
 
 
 def test_config_requires_complete_tls_pair():

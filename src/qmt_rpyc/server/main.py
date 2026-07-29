@@ -105,12 +105,12 @@ def _validate_config(cfg):
         not isinstance(auth_key, str)
         or not auth_key.strip()
         or auth_key == "your-secret-key-here"
-        or len(auth_key.encode("utf-8")) < 16
     )
     if invalid_auth_key and not cfg.get(
             "allow_insecure", False):
         raise ValueError(
-            "QMT_RPYC_AUTH_KEY must contain at least 16 bytes; set "
+            "QMT_RPYC_AUTH_KEY must be non-empty and not use the placeholder; "
+            "set "
             "QMT_RPYC_ALLOW_INSECURE=1 only for an isolated test environment")
     if bool(cfg.get("tls_keyfile")) != bool(cfg.get("tls_certfile")):
         raise ValueError(
@@ -179,6 +179,7 @@ def start_server(cfg, tls=None):
     dm = None
     server = None
     listener_socket = None
+    interrupted = False
     try:
         cm = ConnectionManager(
             path=cfg["qmt_path"],
@@ -243,6 +244,7 @@ def start_server(cfg, tls=None):
         logger.info("Starting RPyC server on %s:%d", host, port)
         server.start()
     except KeyboardInterrupt:
+        interrupted = True
         print("Server shutting down...")
         logger.info("Shutting down...")
     finally:
@@ -256,6 +258,7 @@ def start_server(cfg, tls=None):
             cm.stop()
         print("Server stopped.")
         logger.info("Server stopped")
+    return 130 if interrupted else 0
 
 
 def main(config_path=None, verbose=False):
@@ -272,8 +275,8 @@ def main(config_path=None, verbose=False):
             "ca_certs": cfg["tls_ca_certs"],
         }
 
-    start_server(cfg, tls)
+    return start_server(cfg, tls)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

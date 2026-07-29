@@ -105,7 +105,7 @@ def _get_window_title(pid):
 
 
 def _extract_account(title):
-    """Extract account ID from a QMT window title like '55011888 - xxx QMT ...'."""
+    """Extract an account ID from a title like 'ACCOUNT_ID - xxx QMT ...'."""
     if title and ' - ' in title:
         part = title.split(' - ')[0].strip()
         if part.isdigit():

@@ -23,7 +23,7 @@ from PyPI:
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple --pre \
-  "qmt-rpyc[server]==0.3.0rc3"
+  "qmt-rpyc[server]==0.3.1rc1"
 ```
 
 Server, on Windows with Python 3.10 or 3.11:
@@ -56,6 +56,10 @@ qmt-rpyc-client call --profile office xtdata get_full_tick \
 Trading calls require `--confirm-trading`; unknown writes require
 `--confirm-write`. Callback parameters are not supported by the first CLI
 release.
+
+The server generates a strong authentication key by default. Custom keys have
+no minimum length for compatibility, but the generated strong key remains the
+recommended choice.
 
 ## Security
 

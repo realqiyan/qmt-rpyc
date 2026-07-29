@@ -5,7 +5,7 @@
 qmt-rpyc 通过 RPyC 将 Windows QMT/MiniQMT 中的 broker-customized
 `xtquant` SDK 暴露给 Linux、macOS 和 Windows 客户端。
 
-> 当前版本为 `0.3.0rc3`。请先在模拟或只读环境验证，再用于实盘。
+> 当前版本为 `0.3.1rc1`。请先在模拟或只读环境验证，再用于实盘。
 
 ## 安装
 
@@ -24,7 +24,7 @@ qmt-rpyc-client check --profile office
 ```bat
 py -3.11 -m pip install --index-url https://pypi.org/simple ^
   --extra-index-url https://test.pypi.org/simple --pre ^
-  "qmt-rpyc[server]==0.3.0rc3"
+  "qmt-rpyc[server]==0.3.1rc1"
 ```
 
 Python SDK：
@@ -138,6 +138,8 @@ qmt-rpyc-client self-test --profile office
 - 探测运行中的 MiniQMT、`userdata_mini`、账户和 `xtquant`。
 - 推荐私有 LAN 地址，不静默绑定所有网卡。
 - 默认生成强认证密钥，也允许用户自定义。
+- 自定义认证密钥没有最短长度限制；短密钥仅用于兼容，仍建议使用默认生成的
+  强密钥。
 - 经确认后在受管 venv 中建立指向券商 `xtquant` 的 junction。
 
 客户端 profile 使用平台标准配置目录。认证密钥默认保存到 Windows

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.1rc1] - 2026-07-29
+
+### Added
+
+- Added descriptions, argument guidance, examples, and getting-started flows
+  to every client and server CLI command level.
+- Added `--version` support to both installed commands.
+- Added actionable guidance when server-only dependencies are missing.
+- Added initialization results that point to the appropriate check and start
+  commands, including custom server configuration paths.
+
+### Changed
+
+- Ctrl-C now exits client commands cleanly with status 130 and no traceback;
+  foreground server shutdown also preserves status 130 after resource cleanup.
+- Custom authentication keys are now accepted at any non-empty length. The
+  generated strong key remains the recommended default.
+- CLI usage errors now include the relevant command help and examples.
+
 ## [0.3.0rc3] - 2026-07-29
 
 - Replaced an account-shaped README example with an explicit placeholder

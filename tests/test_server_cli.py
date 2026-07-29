@@ -1,4 +1,8 @@
+import argparse
+import json
 from pathlib import Path
+
+import pytest
 
 from qmt_rpyc.cli import server as cli
 
@@ -11,19 +15,30 @@ def test_default_server_dir_uses_local_app_data(monkeypatch):
     )
 
 
-def test_validate_values_rejects_short_key_and_invalid_port():
+def test_validate_values_accepts_short_key_and_rejects_invalid_port():
     errors = cli._validate_values({
         "QMT_RPYC_AUTH_KEY": "short",
         "QMT_PATH": "userdata_mini",
         "QMT_RPYC_PORT": "70000",
     })
 
-    assert any("at least 16 bytes" in error for error in errors)
+    assert not any("QMT_RPYC_AUTH_KEY" in error for error in errors)
     assert any("between 1 and 65535" in error for error in errors)
 
 
+@pytest.mark.parametrize("auth_key", ["", "   ", "your-secret-key-here"])
+def test_validate_values_rejects_unusable_key(auth_key):
+    errors = cli._validate_values({
+        "QMT_RPYC_AUTH_KEY": auth_key,
+        "QMT_PATH": "userdata_mini",
+        "QMT_RPYC_PORT": "18812",
+    })
+
+    assert any("QMT_RPYC_AUTH_KEY" in error for error in errors)
+
+
 def test_non_interactive_init_generates_key_without_prompt(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, capsys):
     target = tmp_path / "config.env"
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("QMT_RPYC_AUTH_KEY", raising=False)
@@ -49,3 +64,72 @@ def test_non_interactive_init_generates_key_without_prompt(
     assert values["QMT_RPYC_HOST"] == "10.0.0.2"
     assert len(values["QMT_RPYC_AUTH_KEY"].encode("utf-8")) >= 16
     assert values["QMT_PATH"] == "C:/QMT/userdata_mini"
+    result = json.loads(capsys.readouterr().out)
+    assert str(target) in result["next_steps"][0]
+    assert result["next_steps"][0].endswith(" check")
+    assert str(target) in result["next_steps"][1]
+    assert result["next_steps"][1].endswith(" start")
+
+
+def _assert_all_commands_described(parser):
+    assert parser.description
+    for action in parser._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        visible_help = {
+            choice.dest: choice.help for choice in action._choices_actions
+        }
+        for name, child in action.choices.items():
+            assert visible_help[name]
+            assert child.description
+            _assert_all_commands_described(child)
+
+
+def test_all_server_command_levels_have_help():
+    _assert_all_commands_described(cli.build_parser())
+
+
+def test_server_no_command_prints_getting_started(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main([])
+
+    assert exc.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "Getting started" in stderr
+    assert "qmt-rpyc-server init" in stderr
+
+
+def test_server_version(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--version"])
+
+    assert exc.value.code == 0
+    assert "qmt-rpyc-server " in capsys.readouterr().out
+
+
+def test_server_ctrl_c_is_clean(monkeypatch, capsys):
+    def interrupt(_args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_cmd_start", interrupt)
+
+    assert cli.main(["start"]) == 130
+    stderr = capsys.readouterr().err
+    assert json.loads(stderr)["status"] == "interrupted"
+    assert "Traceback" not in stderr
+
+
+def test_missing_server_extra_has_install_hint(monkeypatch, capsys):
+    def missing_dependency(_args):
+        raise ModuleNotFoundError(
+            "No module named 'pandas'",
+            name="pandas",
+        )
+
+    monkeypatch.setattr(cli, "_cmd_start", missing_dependency)
+
+    assert cli.main(["start"]) == 1
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error_type"] == "ModuleNotFoundError"
+    assert "qmt-rpyc[server]" in payload["hint"]
+    assert "Python 3.10 or 3.11" in payload["hint"]

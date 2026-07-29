@@ -95,3 +95,51 @@ Name files `test_<area>.py` and tests `test_<behavior>`. Add focused regression 
 ## Commit and Pull Request Guidelines
 
 Use concise Conventional Commit subjects matching recent history: `feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, or `chore:`. Keep each commit scoped to one logical change. Pull requests should explain motivation and behavior changes, list commands run, link relevant issues or design documents, and identify Windows/QMT-specific validation. Include logs or screenshots only when they clarify runtime behavior.
+
+## Release Process
+
+Versions are defined in `src/qmt_rpyc/version.py` and tags use the matching
+`v<version>` form, for example `0.3.1rc1` and `v0.3.1rc1`. Python package
+versions and release tags are immutable: never reuse a published version or
+move an existing release tag.
+
+Before creating a release:
+
+1. Start from an up-to-date `master` branch with no unrelated worktree
+   changes.
+2. Review the complete diff and scan tracked files and the built wheel/sdist
+   for authentication keys, account IDs, certificates, local QMT paths, logs,
+   and other local environment data.
+3. Update `src/qmt_rpyc/version.py`, `CHANGELOG.md`, and version-specific
+   examples in `README.md` and `README.en.md`.
+4. Run `python -m pytest tests/ -v`. Live tests may skip outside Windows/QMT,
+   but the portable and mocked suites must pass.
+5. Build into a clean temporary directory with `python -m build --outdir
+   <temp-dir>`, run `python -m twine check <temp-dir>/*`, install the wheel in
+   a fresh virtual environment, and smoke-test both `qmt-rpyc-client` and
+   `qmt-rpyc-server` help/version commands.
+6. Commit the release preparation with a scoped Conventional Commit, create
+   the matching annotated tag, then push the commit and tag.
+
+Pushing an RC tag runs `.github/workflows/release.yml`. The workflow reruns CI,
+builds distributions once, creates a prerelease on GitHub with the Windows
+bootstrap bundle and checksums, and publishes the Python distributions to
+TestPyPI through the `testpypi` trusted-publisher environment. Verify the
+workflow, GitHub Release assets, and TestPyPI metadata before asking for
+Windows validation.
+
+Install an RC for Windows validation while resolving third-party dependencies
+from production PyPI:
+
+```bat
+py -3.11 -m pip install --index-url https://pypi.org/simple ^
+  --extra-index-url https://test.pypi.org/simple --pre ^
+  "qmt-rpyc[server]==<version>"
+```
+
+Production promotion of an RC is a separate, explicitly authorized action.
+Run the `Release` workflow manually with the existing tag as its `tag` input.
+The `promote-to-pypi` job downloads exactly the wheel and sdist attached to the
+existing GitHub Release and publishes them through the `pypi` trusted-publisher
+environment; do not rebuild between Windows validation and promotion. Stable
+tags publish directly to production PyPI after CI and GitHub Release creation.
