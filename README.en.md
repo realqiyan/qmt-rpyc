@@ -17,6 +17,15 @@ qmt-rpyc-client init --profile office
 qmt-rpyc-client check --profile office
 ```
 
+To install a Windows server RC from TestPyPI while resolving dependencies
+from PyPI:
+
+```bash
+python -m pip install --index-url https://pypi.org/simple \
+  --extra-index-url https://test.pypi.org/simple --pre \
+  "qmt-rpyc[server]==0.3.0rc3"
+```
+
 Server, on Windows with Python 3.10 or 3.11:
 
 ```bat

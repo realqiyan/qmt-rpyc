@@ -19,6 +19,14 @@ qmt-rpyc-client init --profile office
 qmt-rpyc-client check --profile office
 ```
 
+在 Windows 服务端测试 TestPyPI 上的 RC 时，正式 PyPI 必须作为依赖来源：
+
+```bat
+py -3.11 -m pip install --index-url https://pypi.org/simple ^
+  --extra-index-url https://test.pypi.org/simple --pre ^
+  "qmt-rpyc[server]==0.3.0rc3"
+```
+
 Python SDK：
 
 ```python

@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub Release tag to promote to PyPI
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,9 +17,11 @@ permissions:
 
 jobs:
   test:
+    if: github.event_name == 'push'
     uses: ./.github/workflows/ci.yml
 
   github-release:
+    if: github.event_name == 'push'
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -48,6 +56,7 @@ jobs:
             SHA256SUMS
 
   publish-python:
+    if: github.event_name == 'push'
     needs: [test, github-release]
     runs-on: ubuntu-latest
     environment:
@@ -64,4 +73,35 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
       - name: Publish stable release to PyPI
         if: ${{ !contains(github.ref_name, 'rc') }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  promote-to-pypi:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download existing GitHub Release distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          case "${RELEASE_TAG}" in
+            v*) ;;
+            *) echo "tag must start with v"; exit 1 ;;
+          esac
+          mkdir dist
+          gh release download "${RELEASE_TAG}" \
+            --pattern "qmt_rpyc-*.whl" \
+            --pattern "qmt_rpyc-*.tar.gz" \
+            --dir dist
+          VERSION="${RELEASE_TAG#v}"
+          test -f "dist/qmt_rpyc-${VERSION}-py3-none-any.whl"
+          test -f "dist/qmt_rpyc-${VERSION}.tar.gz"
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 2
+      - name: Publish existing distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
