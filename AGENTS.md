@@ -68,7 +68,7 @@ Batching is supported only for xtdata calls to the same function. The project in
 ## Runtime Constraints and Configuration
 
 - The server must use Python 3.10 or 3.11 because xtquant native extensions do not support CPython 3.12+.
-- The client supports Python 3.8+ and requires only `rpyc>=6.0.0`.
+- The client supports Python 3.9+.
 - Server compatibility pins include `numpy>=1.24,<2` and `pandas>=2,<3`.
 - The deployed xtquant SDK is a broker-customized offline build and may differ from public xtquant releases and documentation. Treat the API surface discovered from the actual Windows deployment as the source of truth for supported functions and signatures.
 - The server is intended to expose the complete API surface available from that deployed xtquant build.

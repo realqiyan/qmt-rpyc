@@ -9,7 +9,7 @@ from platformdirs import user_config_dir
 
 try:
     import tomllib
-except ImportError:  # pragma: no cover - Python 3.8-3.10
+except ImportError:  # pragma: no cover - Python 3.9-3.10
     import tomli as tomllib
 
 import tomli_w

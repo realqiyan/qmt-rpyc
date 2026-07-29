@@ -7,7 +7,7 @@ name = "qmt-rpyc"
 dynamic = ["version"]
 description = "Cross-platform RPyC bridge for QMT/MiniQMT xtquant"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = "MIT"
 authors = [{name = "qmt-rpyc contributors"}]
 keywords = ["qmt", "miniqmt", "xtquant", "rpyc", "trading"]
@@ -15,7 +15,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -28,8 +27,7 @@ dependencies = [
     "platformdirs>=3.0",
     "tomli>=2.0; python_version < '3.11'",
     "tomli-w>=1.0",
-    "keyring>=25,<25.6; python_version < '3.9'",
-    "keyring>=25.6; python_version >= '3.9'",
+    "keyring>=25.6",
 ]
 
 [project.optional-dependencies]

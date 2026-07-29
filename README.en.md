@@ -9,6 +9,8 @@ QMT/MiniQMT on Windows to clients on Linux, macOS, and Windows.
 
 Client:
 
+Python 3.9 or newer is required.
+
 ```bash
 pip install qmt-rpyc
 qmt-rpyc-client init --profile office

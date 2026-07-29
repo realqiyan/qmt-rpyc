@@ -5,11 +5,13 @@
 qmt-rpyc 通过 RPyC 将 Windows QMT/MiniQMT 中的 broker-customized
 `xtquant` SDK 暴露给 Linux、macOS 和 Windows 客户端。
 
-> 当前版本为 `0.3.0rc1`。请先在模拟或只读环境验证，再用于实盘。
+> 当前版本为 `0.3.0rc2`。请先在模拟或只读环境验证，再用于实盘。
 
 ## 安装
 
 ### 客户端
+
+要求 Python 3.9 或更高版本。
 
 ```bash
 pip install qmt-rpyc

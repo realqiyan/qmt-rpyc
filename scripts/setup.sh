@@ -24,7 +24,7 @@ if ! command -v "$PYTHON_EXE" &>/dev/null; then
 fi
 
 if ! command -v "$PYTHON_EXE" &>/dev/null; then
-    echo "[ERROR] Python not found. Install Python 3.8+."
+    echo "[ERROR] Python not found. Install Python 3.9+."
     echo "        https://www.python.org/downloads/"
     exit 1
 fi
@@ -34,8 +34,8 @@ echo "        Found Python $PYTHON_VER  ($PYTHON_EXE)"
 
 MAJOR=$(echo "$PYTHON_VER" | cut -d. -f1)
 MINOR=$(echo "$PYTHON_VER" | cut -d. -f2)
-if [ "$MAJOR" -lt 3 ] || { [ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 8 ]; }; then
-    echo "[ERROR] Python 3.8+ required, got $PYTHON_VER"
+if [ "$MAJOR" -lt 3 ] || { [ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 9 ]; }; then
+    echo "[ERROR] Python 3.9+ required, got $PYTHON_VER"
     exit 1
 fi
 

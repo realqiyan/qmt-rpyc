@@ -7,7 +7,7 @@
 # macOS, and Windows (Git Bash / WSL).
 #
 # Prerequisites:
-#   - Python >= 3.8
+#   - Python >= 3.9
 #   - pip install -e .  (or pip install rpyc>=6.0.0)
 #
 # Usage:
