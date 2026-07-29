@@ -2,7 +2,7 @@
 setlocal
 chcp 65001 >nul 2>&1
 
-set "QMT_RPYC_VERSION=0.3.0rc2"
+set "QMT_RPYC_VERSION=0.3.0rc3"
 set "QMT_RPYC_ROOT=%LOCALAPPDATA%\qmt-rpyc"
 set "QMT_RPYC_VENV=%QMT_RPYC_ROOT%\venv"
 set "PYTHON_CMD="

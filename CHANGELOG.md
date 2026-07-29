@@ -1,6 +1,9 @@
 # Changelog
 
-## [0.3.0rc2] - 2026-07-29
+## [0.3.0rc3] - 2026-07-29
+
+- Replaced an account-shaped README example with an explicit placeholder
+  before publishing to a Python package index.
 
 - Raised the client minimum to Python 3.9 so modern SPDX package metadata can
   be used consistently. The RC1 tag did not produce release artifacts.

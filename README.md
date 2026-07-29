@@ -5,7 +5,7 @@
 qmt-rpyc 通过 RPyC 将 Windows QMT/MiniQMT 中的 broker-customized
 `xtquant` SDK 暴露给 Linux、macOS 和 Windows 客户端。
 
-> 当前版本为 `0.3.0rc2`。请先在模拟或只读环境验证，再用于实盘。
+> 当前版本为 `0.3.0rc3`。请先在模拟或只读环境验证，再用于实盘。
 
 ## 安装
 
@@ -92,14 +92,14 @@ qmt-rpyc-client call --profile office xtdata get_full_tick \
   --args '[["600000.SH"]]'
 
 qmt-rpyc-client call --profile office trader query_stock_asset \
-  --args '["1000000365"]'
+  --args '["YOUR_ACCOUNT_ID"]'
 ```
 
 交易方法必须显式确认：
 
 ```bash
 qmt-rpyc-client call --profile office trader order_stock \
-  --args '["1000000365","600000.SH",23,100,5,10.0]' \
+  --args '["YOUR_ACCOUNT_ID","600000.SH",23,100,5,10.0]' \
   --confirm-trading
 ```
 
