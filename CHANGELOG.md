@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.3.1rc2] - 2026-09-12
+
+### Added
+
+- Added `DownloadTaskManager.fail_pending(reason)`, which terminates queued
+  download tasks and records the reason while leaving calls already inside the
+  SDK to report their real result. It is not yet wired to connection-state
+  detection, so the disconnect rule for downloads is not end-to-end active.
+- Added `ConnectionManager.probe()`, a single blocking initialize-and-connect
+  attempt for diagnostics that must report the current connection outcome.
+
+### Changed
+
+- The RPC server now starts independently of the trading connection. The first
+  background connection attempt runs immediately; failures wait 10 seconds,
+  30 seconds, 1 minute, then 10 minutes between subsequent attempts, unlimited
+  by default. Invalid local configuration, SDK import failures, and occupied
+  ports still fail startup.
+- `health()` keeps every existing field and adds `connection_state`,
+  `consecutive_failures`, `last_connection_error`, and `next_retry_at`. Startup
+  output reports the same state. An available RPC connection no longer implies
+  trading readiness, and disconnected trading requests fail without queuing or
+  replay.
+- `qmt-rpyc-server check` now reports the outcome of one blocking connection
+  probe instead of scheduling a background attempt, which previously made it
+  report success whenever QMT was unreachable.
+
+### Fixed
+
+- Fixed disconnect events being dropped when a stale callback arrived after
+  reconnection, and fixed heartbeat results being applied to a replaced
+  trader. Account subscription failures after a successful `connect()` are now
+  surfaced through `last_connection_error`.
+
 ## [0.3.1rc1] - 2026-07-29
 
 ### Added
