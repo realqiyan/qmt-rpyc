@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL_SECONDS = 30
 HEARTBEAT_TIMEOUT_SECONDS = 5
 HEARTBEAT_MAX_FAILURES = 3
-RECONNECT_BACKOFF_SECONDS = [1, 2, 4, 8, 16, 30]
+RECONNECT_BACKOFF_SECONDS = [10, 30, 60, 600]
 RECONNECT_MAX_ATTEMPTS = 0  # 0 = unlimited
 _STOP_JOIN_TIMEOUT = 2
 
@@ -125,14 +125,8 @@ class _Callback:
         })
 
     def on_disconnected(self):
-        self._safe_publish({
-            "type": "disconnect",
-            "timestamp": datetime.now().isoformat(),
-            "account_id": None,
-            "data": None,
-        })
         try:
-            self._manager.mark_disconnected(self._trader)
+            self._manager.mark_disconnected(self._trader, publish_event=True)
         except Exception:
             logger.warning("mark_disconnected failed", exc_info=True)
 
@@ -174,8 +168,9 @@ class ConnectionManager:
 
     Public API
     ----------
-    start()              – one-shot init → connect → heartbeat (preferred)
+    start()              – launch background initialization and connection
     stop()               – graceful shutdown
+    probe()              – initialize and connect once, synchronously
     connect()            – attempt a single connection (returns bool)
     mark_disconnected()  – force-disconnect (e.g. from callback)
     start_heartbeat()    – launch the heartbeat thread
@@ -213,6 +208,11 @@ class ConnectionManager:
         self._heartbeat_failures = 0
         self._start_time = time.time()
         self._last_heartbeat = None
+        self._connection_state = "disconnected"
+        self._last_connection_error = ""
+        self._consecutive_failures = 0
+        self._next_retry_at = None
+        self._disconnect_generation = 0
         self._account_parameters = {
             name: _AccountParameter("account", 0)
             for name in _ACCOUNT_METHODS
@@ -221,26 +221,12 @@ class ConnectionManager:
     # ── public entry points ────────────────────────────────────────
 
     def start(self):
-        """Initialize trader, connect, and begin heartbeat.
+        """Schedule the first attempt immediately, without waiting for QMT.
 
-        Returns True only when the initial QMT connection and optional account
-        subscription succeed. Runtime disconnects are still handled by the
-        heartbeat reconnection loop.
+        SDK imports must be validated by the server before calling this method.
+        The return value indicates scheduling, not trading readiness.
         """
-        self._init_trader()
-        if self._trader is not None:
-            if self.connect():
-                self.start_heartbeat()
-                logger.info("QMT connected, heartbeat started (interval=%ds, "
-                            "timeout=%ds, max_failures=%d)",
-                            self._heartbeat_interval, self._heartbeat_timeout,
-                            self._heartbeat_max_failures)
-                return True
-            else:
-                logger.error("QMT initial connection failed")
-        else:
-            logger.error("xtquant not available — trader is None")
-        return False
+        return self.schedule_reconnect(immediate=True)
 
     def stop(self):
         """Graceful shutdown: stop heartbeat, cancel reconnect, stop trader."""
@@ -253,8 +239,23 @@ class ConnectionManager:
             self._trader = None
             self._native_lock = None
             self._connected = False
+            self._connection_state = "stopped"
+            self._next_retry_at = None
         self._stop_trader(trader)
         logger.info("ConnectionManager stopped")
+
+    def probe(self):
+        """Initialize and connect once, blocking until the attempt finishes.
+
+        Unlike start(), which returns as soon as the background attempt is
+        scheduled, this reports the actual outcome of a single attempt and
+        never schedules retries.  The caller owns the lifecycle and must call
+        stop() afterwards.
+        """
+        self._init_trader()
+        if self._trader is None:
+            return False
+        return self.connect()
 
     # ── trader init / connect ──────────────────────────────────────
 
@@ -269,10 +270,12 @@ class ConnectionManager:
             trader.start()
         except ImportError:
             logger.error("xtquant not available")
+            self._record_connection_error("xtquant import failed")
             self._stop_trader(trader)
             return
-        except Exception:
+        except Exception as e:
             logger.exception("trader init failed")
+            self._record_connection_error("trader initialization failed: " + type(e).__name__)
             self._stop_trader(trader)
             return
 
@@ -309,12 +312,14 @@ class ConnectionManager:
             if (trader is None or native_lock is None
                     or self._stop_event.is_set()):
                 return False
+            generation = self._disconnect_generation
 
         try:
             with native_lock:
                 result = trader.connect()
         except Exception as e:
             logger.error("connect failed: %s", e)
+            self._record_connection_error("Trader.connect failed: " + type(e).__name__)
             with self._trader_lock:
                 if self._trader is trader:
                     self._connected = False
@@ -325,6 +330,7 @@ class ConnectionManager:
                 return False
             if result != 0:
                 self._connected = False
+                self._last_connection_error = "Trader.connect returned {}".format(result)
                 return False
 
         # Subscribe after successful connect
@@ -333,12 +339,16 @@ class ConnectionManager:
             with self._trader_lock:
                 if self._trader is trader:
                     self._connected = False
+                    self._last_connection_error = "account subscription failed"
             return False
 
         with self._trader_lock:
-            if self._trader is not trader or self._stop_event.is_set():
+            if (self._trader is not trader or self._stop_event.is_set()
+                    or self._disconnect_generation != generation):
                 return False
             self._connected = True
+            self._connection_state = "connected"
+            self._next_retry_at = None
             self._last_heartbeat = datetime.now()
             self._heartbeat_failures = 0
         return True
@@ -389,8 +399,8 @@ class ConnectionManager:
             return
         if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
             return
-        if not self._stop_event.is_set():
-            self._stop_event.clear()
+        if self._stop_event.is_set():
+            return
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop, name="qmt-heartbeat", daemon=True)
         self._heartbeat_thread.start()
@@ -401,23 +411,25 @@ class ConnectionManager:
             with self._trader_lock:
                 if not self._connected:
                     continue
+                trader = self._trader
+                generation = self._disconnect_generation
 
             ok = self._do_heartbeat()
-            if ok:
-                with self._trader_lock:
+            with self._trader_lock:
+                if (self._trader is not trader or not self._connected
+                        or self._disconnect_generation != generation):
+                    continue
+                if ok:
                     self._last_heartbeat = datetime.now()
                     self._heartbeat_failures = 0
-            else:
-                with self._trader_lock:
+                else:
                     self._heartbeat_failures += 1
                     failures = self._heartbeat_failures
-                logger.warning("Heartbeat failure %d/%d",
-                               failures,
-                               self._heartbeat_max_failures)
-                if failures >= self._heartbeat_max_failures:
-                    logger.error("Heartbeat lost — %d consecutive failures",
-                                 failures)
-                    self.mark_disconnected()
+                    logger.warning("Heartbeat failure %d/%d",
+                                   failures, self._heartbeat_max_failures)
+            if not ok and failures >= self._heartbeat_max_failures:
+                logger.error("Heartbeat lost — %d consecutive failures", failures)
+                self.mark_disconnected(trader)
 
     def _do_heartbeat(self) -> bool:
         """Execute one heartbeat check with timeout.  Returns True if alive.
@@ -475,74 +487,139 @@ class ConnectionManager:
 
     # ── disconnect / reconnect ─────────────────────────────────────
 
-    def mark_disconnected(self, source_trader=None):
+    def mark_disconnected(self, source_trader=None, publish_event=False):
         """Mark connection as lost and trigger reconnection.
 
         Called from _Callback.on_disconnected (xtquant callback) or after
         consecutive heartbeat failures.
         """
         with self._trader_lock:
+            if self._stop_event.is_set():
+                return
             if source_trader is not None and self._trader is not source_trader:
                 return
             was_connected = self._connected
             self._connected = False
             self._last_heartbeat = None
+            self._disconnect_generation += 1
+            self._last_connection_error = "QMT connection lost"
+            self._connection_state = "disconnected"
+            if publish_event:
+                _Callback._safe_publish({
+                    "type": "disconnect",
+                    "timestamp": datetime.now().isoformat(),
+                    "account_id": None,
+                    "data": None,
+                })
         if was_connected:
             logger.warning("QMT connection lost")
         self.schedule_reconnect()
 
-    def schedule_reconnect(self):
+    def schedule_reconnect(self, immediate=False):
         """Start the reconnect loop if not already running."""
         with self._trader_lock:
-            if self._trader is None:
-                return
-            self._connected = False
+            if self._stop_event.is_set():
+                return False
         with self._state_lock:
             if self._reconnect_thread is not None and self._reconnect_thread.is_alive():
-                return
+                return True
+            if self.is_connected:
+                return True
             self._reconnect_thread = threading.Thread(
-                target=self._reconnect_loop, name="qmt-reconnect", daemon=True)
+                target=self._connection_worker, args=(immediate,),
+                name="qmt-reconnect", daemon=True)
             self._reconnect_thread.start()
+        return True
 
-    def _reconnect_loop(self):
-        """Reconnect with exponential backoff.
+    def _connection_worker(self, immediate):
+        try:
+            self._reconnect_loop(immediate=immediate)
+        finally:
+            # A disconnect may arrive after connect succeeds but before this
+            # worker exits. Clearing ownership under the scheduling lock avoids
+            # losing that callback's request for another worker.
+            with self._state_lock:
+                self._reconnect_thread = None
+            with self._trader_lock:
+                retry = (not self._connected and not self._stop_event.is_set()
+                         and self._connection_state != "exhausted")
+            if retry:
+                self.schedule_reconnect()
+
+    def _record_connection_error(self, message):
+        with self._trader_lock:
+            self._last_connection_error = message
+
+    def _reconnect_loop(self, immediate=False):
+        """Connect with bounded, interruptible retry delays.
 
         On success: re-subscribes account, publishes 'reconnect' event,
         and resets failure counters so the heartbeat resumes cleanly.
         """
+        delay_index = 0
         while not self._stop_event.is_set():
             if self._reconnect_max_attempts > 0 and \
                     self._reconnect_attempts >= self._reconnect_max_attempts:
                 logger.error("Max reconnect attempts (%d) reached — giving up",
                              self._reconnect_max_attempts)
+                with self._trader_lock:
+                    self._connection_state = "exhausted"
+                    self._next_retry_at = None
                 return
 
-            delay = self.RECONNECT_BACKOFF[
-                min(self._reconnect_attempts, len(self.RECONNECT_BACKOFF) - 1)]
+            delay = 0 if immediate else self.RECONNECT_BACKOFF[
+                min(delay_index, len(self.RECONNECT_BACKOFF) - 1)]
+            if not immediate:
+                delay_index += 1
+            immediate = False
+            with self._trader_lock:
+                self._connection_state = "waiting_retry" if delay else "connecting"
+                self._next_retry_at = (
+                    datetime.fromtimestamp(time.time() + delay).isoformat()
+                    if delay else None)
+            if delay:
+                logger.info("QMT waiting to retry in %ss", delay)
             if self._stop_event.wait(delay):
                 return
 
-            self._reconnect_attempts += 1
+            with self._trader_lock:
+                self._connection_state = "connecting"
+                self._next_retry_at = None
+                self._reconnect_attempts += 1
             logger.info("Reconnect attempt %d (delay=%ds) ...",
                         self._reconnect_attempts, delay)
-            self._reset_trader()
-
             attempt_number = self._reconnect_attempts
-            if self.connect():
-                # Notify subscribers
-                event_bus.publish({
-                    "type": "reconnect",
-                    "timestamp": datetime.now().isoformat(),
-                    "account_id": self._account_id,
-                    "data": {"attempts": attempt_number},
-                })
-                self.start_heartbeat()
+            try:
+                self._reset_trader()
+                connected = self.connect()
+            except Exception as e:
+                logger.exception("QMT connection attempt failed")
+                self._record_connection_error("connection attempt failed: " + type(e).__name__)
+                connected = False
+            if connected:
                 with self._trader_lock:
+                    if not self._connected or self._stop_event.is_set():
+                        # The callback won the race after connect returned.
+                        # Worker cleanup schedules the next connection episode.
+                        return
                     self._heartbeat_failures = 0
                     self._reconnect_attempts = 0
+                    self._consecutive_failures = 0
+                    self._last_connection_error = ""
+                    _Callback._safe_publish({
+                        "type": "reconnect",
+                        "timestamp": datetime.now().isoformat(),
+                        "account_id": self._account_id,
+                        "data": {"attempts": attempt_number},
+                    })
+                self.start_heartbeat()
                 logger.info("Reconnect successful after %d attempt(s)",
                             attempt_number)
                 return
+            with self._trader_lock:
+                self._consecutive_failures += 1
+            logger.warning("QMT connection attempt failed: %s",
+                           self._last_connection_error)
 
     def _reset_trader(self):
         """Stop old trader and create a fresh one."""
@@ -590,6 +667,12 @@ class ConnectionManager:
                         "error_message": "trader not connected"}
         try:
             with native_lock:
+                with self._trader_lock:
+                    if (self._trader is not trader or not self._connected
+                            or self._stop_event.is_set()):
+                        return {"status": STATUS_ERROR,
+                                "error_type": "NotConnected",
+                                "error_message": "trader not connected"}
                 method = getattr(trader, name, None)
                 if method is None:
                     return {
@@ -620,6 +703,10 @@ class ConnectionManager:
                 "reconnect_attempts": self._reconnect_attempts,
                 "uptime_seconds": round(time.time() - self._start_time, 1),
                 "trader_available": trader_available,
+                "connection_state": self._connection_state,
+                "consecutive_failures": self._consecutive_failures,
+                "last_connection_error": self._last_connection_error,
+                "next_retry_at": self._next_retry_at,
             }
 
     # ── internal helpers ───────────────────────────────────────────

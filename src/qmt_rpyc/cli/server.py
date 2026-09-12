@@ -335,7 +335,9 @@ def _cmd_check(args):
                 account_id=values.get("QMT_ACCOUNT_ID", ""),
             )
             try:
-                connected = manager.start()
+                # probe() blocks for one real attempt; start() only schedules
+                # a background connection and would always report success.
+                connected = manager.probe()
             finally:
                 manager.stop()
         except Exception as e:

@@ -85,6 +85,42 @@ def _assert_all_commands_described(parser):
             _assert_all_commands_described(child)
 
 
+def test_check_reports_failed_qmt_connection_from_blocking_probe(
+        monkeypatch, tmp_path, capsys):
+    import sys
+    import types
+
+    from qmt_rpyc.server.connection import ConnectionManager
+
+    config = tmp_path / "config.env"
+    config.write_text(
+        "QMT_PATH=C:\\qmt\\userdata_mini\n"
+        "QMT_RPYC_AUTH_KEY=test-only-key-not-a-real-secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "detect_environment", lambda: {"miniqmt": True})
+    monkeypatch.setattr(cli, "managed_xtquant_path", lambda: "xtquant")
+    monkeypatch.setitem(sys.modules, "xtquant", types.ModuleType("xtquant"))
+    calls = []
+    monkeypatch.setattr(ConnectionManager, "probe",
+                        lambda self: calls.append("probe") or False)
+    monkeypatch.setattr(ConnectionManager, "start",
+                        lambda self: pytest.fail("check must not schedule "
+                                                 "a background connection"))
+
+    args = cli.build_parser().parse_args(["--config", str(config), "check"])
+    assert cli._cmd_check(args) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    connection = [c for c in payload["checks"] if c["name"] == "qmt_connection"]
+    assert calls == ["probe"]
+    assert connection == [{
+        "name": "qmt_connection",
+        "ok": False,
+        "detail": "initial QMT connection failed",
+    }]
+
+
 def test_all_server_command_levels_have_help():
     _assert_all_commands_described(cli.build_parser())
 

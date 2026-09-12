@@ -23,6 +23,226 @@ def mock_xtquant():
 
 
 class TestConnectionManager:
+    def test_start_returns_while_native_constructor_is_blocked(
+            self, mock_xtquant, monkeypatch):
+        from qmt_rpyc.server.connection import ConnectionManager
+        sdk = sys.modules["xtquant.xttrader"]
+
+        entered = threading.Event()
+        release = threading.Event()
+        original = sdk.XtQuantTrader
+
+        def blocked_constructor(*args):
+            entered.set()
+            assert release.wait(2)
+            return original(*args)
+
+        monkeypatch.setattr(sdk, "XtQuantTrader", blocked_constructor)
+        cm = ConnectionManager("test", 1, "ACC1")
+        try:
+            assert cm.start() is True
+            assert entered.wait(1)
+            assert not cm.is_connected
+            assert cm.get_health_status()["connection_state"] == "connecting"
+            release.set()
+            worker = cm._reconnect_thread
+            if worker is not None:
+                worker.join(1)
+            assert cm.is_connected
+            assert cm.get_health_status()["consecutive_failures"] == 0
+        finally:
+            release.set()
+            cm.stop()
+
+    @pytest.mark.parametrize("connect_result, expected", [(0, True), (-1, False)])
+    def test_probe_reports_one_attempt_without_scheduling_retries(
+            self, mock_xtquant, monkeypatch, connect_result, expected):
+        from qmt_rpyc.server.connection import ConnectionManager
+        sdk = sys.modules["xtquant.xttrader"]
+
+        attempts = []
+
+        def connect(trader):
+            attempts.append(1)
+            return connect_result
+
+        monkeypatch.setattr(sdk.XtQuantTrader, "connect", connect)
+        cm = ConnectionManager("test", 1, "ACC1")
+        try:
+            assert cm.probe() is expected
+            assert len(attempts) == 1
+            assert cm.is_connected is expected
+            assert cm._reconnect_thread is None
+            health = cm.get_health_status()
+            assert health["last_connection_error"] == (
+                "" if expected else "Trader.connect returned -1")
+            assert health["next_retry_at"] is None
+        finally:
+            cm.stop()
+
+    @pytest.mark.parametrize("stage", ["init", "connect", "subscribe"])
+    def test_failed_initial_attempt_recovers_with_heartbeat(
+            self, mock_xtquant, monkeypatch, stage):
+        from qmt_rpyc.server.connection import ConnectionManager
+        sdk = sys.modules["xtquant.xttrader"]
+
+        original = sdk.XtQuantTrader
+        attempts = []
+
+        def factory(*args):
+            attempts.append(1)
+            if len(attempts) == 1 and stage == "init":
+                raise RuntimeError("maintenance")
+            trader = original(*args)
+            if len(attempts) == 1:
+                setattr(trader, stage, lambda *args: -1)
+            return trader
+
+        monkeypatch.setattr(sdk, "XtQuantTrader", factory)
+        cm = ConnectionManager("test", 1, "ACC1")
+        cm.RECONNECT_BACKOFF = [0.001]
+        try:
+            cm.start()
+            worker = cm._reconnect_thread
+            if worker is not None:
+                worker.join(2)
+            assert cm.is_connected
+            assert len(attempts) == 2
+            assert cm._heartbeat_thread.is_alive()
+            health = cm.get_health_status()
+            assert health["connection_state"] == "connected"
+            assert health["last_connection_error"] == ""
+            assert health["next_retry_at"] is None
+            assert health["consecutive_failures"] == 0
+        finally:
+            cm.stop()
+
+    @pytest.mark.parametrize("immediate, expected", [
+        (True, [0, 10, 30, 60, 600, 600]),
+        (False, [10, 30, 60, 600, 600, 600]),
+    ])
+    def test_retry_delays_and_health(self, mock_xtquant, monkeypatch,
+                                   immediate, expected):
+        from qmt_rpyc.server.connection import ConnectionManager
+
+        cm = ConnectionManager("test", 1, "")
+        waits = []
+        snapshots = []
+
+        class Clock:
+            def is_set(self):
+                return False
+
+            def wait(self, delay):
+                waits.append(delay)
+                snapshots.append(cm.get_health_status())
+                return len(waits) == len(expected)
+
+        cm._stop_event = Clock()
+        monkeypatch.setattr(cm, "_reset_trader", lambda: None)
+        monkeypatch.setattr(cm, "connect", lambda: False)
+        cm._reconnect_loop(immediate=immediate)
+        assert waits == expected
+        assert snapshots[-1]["connection_state"] == "waiting_retry"
+        assert snapshots[-1]["next_retry_at"] is not None
+        assert snapshots[-1]["consecutive_failures"] == len(expected) - 1
+
+    def test_stop_interrupts_long_retry_wait(self, mock_xtquant, monkeypatch):
+        from qmt_rpyc.server.connection import ConnectionManager
+
+        cm = ConnectionManager("test", 1, "")
+        cm.RECONNECT_BACKOFF = [600]
+        entered = threading.Event()
+        monkeypatch.setattr(cm, "_reset_trader", lambda: entered.set())
+        cm.start()
+        assert entered.wait(1)
+        worker = cm._reconnect_thread
+        cm.stop()
+        assert not worker.is_alive()
+        assert cm.get_health_status()["connection_state"] == "stopped"
+        assert cm.start() is False
+
+    def test_stale_disconnect_does_not_publish_event(
+            self, mock_xtquant, monkeypatch):
+        import qmt_rpyc.server.connection as connection
+
+        cm = connection.ConnectionManager("test", 1, "")
+        cm._init_trader()
+        stale_callback = cm._callback
+        cm._reset_trader()
+        assert cm.connect()
+        events = []
+        monkeypatch.setattr(connection.event_bus, "publish", events.append)
+        try:
+            stale_callback.on_disconnected()
+            assert cm.is_connected
+            assert events == []
+        finally:
+            cm.stop()
+
+    def test_disconnect_after_connect_does_not_publish_false_recovery(
+            self, mock_xtquant, monkeypatch):
+        import qmt_rpyc.server.connection as connection
+
+        cm = connection.ConnectionManager("test", 1, "")
+        cm.RECONNECT_BACKOFF = [0]
+        real_connect = cm.connect
+        events = []
+
+        def connect_then_disconnect():
+            assert real_connect()
+            cm.mark_disconnected(cm.trader)
+            return True
+
+        monkeypatch.setattr(cm, "connect", connect_then_disconnect)
+        monkeypatch.setattr(cm, "schedule_reconnect", lambda: None)
+        monkeypatch.setattr(connection.event_bus, "publish", events.append)
+        try:
+            cm._reconnect_loop(immediate=True)
+            assert not cm.is_connected
+            assert cm.get_health_status()["last_connection_error"] == "QMT connection lost"
+            assert events == []
+        finally:
+            cm.stop()
+
+    @pytest.mark.parametrize("probe_result", [True, False])
+    def test_old_heartbeat_result_cannot_update_new_trader(
+            self, mock_xtquant, monkeypatch, probe_result):
+        from qmt_rpyc.server.connection import ConnectionManager
+
+        cm = ConnectionManager("test", 1, "", heartbeat_max_failures=1)
+        cm._init_trader()
+        assert cm.connect()
+        original_event = cm._stop_event
+
+        class OneHeartbeat:
+            calls = 0
+
+            def is_set(self):
+                return False
+
+            def wait(self, timeout):
+                self.calls += 1
+                return self.calls > 1
+
+        def replace_during_probe():
+            cm._reset_trader()
+            assert cm.connect()
+            cm._last_heartbeat = None
+            return probe_result
+
+        cm._stop_event = OneHeartbeat()
+        monkeypatch.setattr(cm, "_do_heartbeat", replace_during_probe)
+        try:
+            cm._heartbeat_loop()
+            health = cm.get_health_status()
+            assert health["connected"]
+            assert health["last_heartbeat"] == ""
+            assert health["heartbeat_failures"] == 0
+        finally:
+            cm._stop_event = original_event
+            cm.stop()
+
     def test_discovers_runtime_account_parameter(self, mock_xtquant):
         from qmt_rpyc.server.connection import _discover_account_parameters
         from xtquant.xttrader import XtQuantTrader

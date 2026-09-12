@@ -5,7 +5,7 @@
 qmt-rpyc 通过 RPyC 将 Windows QMT/MiniQMT 中的 broker-customized
 `xtquant` SDK 暴露给 Linux、macOS 和 Windows 客户端。
 
-> 当前版本为 `0.3.1rc1`。请先在模拟或只读环境验证，再用于实盘。
+> 当前版本为 `0.3.1rc2`。请先在模拟或只读环境验证，再用于实盘。
 
 ## 安装
 
@@ -24,7 +24,7 @@ qmt-rpyc-client check --profile office
 ```bat
 py -3.11 -m pip install --index-url https://pypi.org/simple ^
   --extra-index-url https://test.pypi.org/simple --pre ^
-  "qmt-rpyc[server]==0.3.1rc1"
+  "qmt-rpyc[server]==0.3.1rc2"
 ```
 
 Python SDK：
@@ -81,8 +81,15 @@ qmt-rpyc-server start
 qmt-rpyc-server status
 ```
 
-`start` 在前台运行，启动时如果无法连接 MiniQMT 或订阅配置账户会直接
-失败。运行过程中断线仍会执行心跳检查和指数退避重连。
+`start` 在前台运行。RPC 独立启动，后台立即尝试连接 MiniQMT 并订阅
+配置账户；失败后依次等待 10 秒、30 秒、1 分钟、10 分钟，此后每
+10 分钟重试，默认不限次数。恢复后继续心跳，再断线从等待 10 秒开始。
+SDK 无法导入、认证配置无效或端口占用等本机启动错误仍会直接失败。
+
+`client.health()` 保留 `connected` 等字段，并提供 `connection_state`
+（`connecting`、`waiting_retry`、`connected` 等）、`consecutive_failures`、
+`last_connection_error` 和 `next_retry_at`。RPC 可连接不表示交易连接可用；
+未连接的交易请求直接报错，不排队或重放。
 
 ## 动态 CLI
 

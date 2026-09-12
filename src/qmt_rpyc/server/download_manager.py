@@ -51,6 +51,7 @@ class DownloadTaskManager:
             raise ValueError("max_completed must be at least 1")
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._tasks = {}
+        self._futures = {}
         self._lock = threading.Lock()
         self._max_completed = max_completed
         self._accepting = True
@@ -91,8 +92,35 @@ class DownloadTaskManager:
                 self._prune_locked()
             return task_id
 
+        with self._lock:
+            self._futures[task_id] = future
+            cancelled = task.status == "failed"
         future.add_done_callback(lambda f: self._on_done(task_id, f))
+        if cancelled:
+            future.cancel()
         return task_id
+
+    def fail_pending(self, reason):
+        """Terminate queued work; preserve calls already executing in the SDK.
+
+        Call only on loss of the connection these downloads depend on. Trader
+        connectivity alone is not evidence of an xtdata disconnection.
+        """
+        futures = []
+        with self._lock:
+            for task_id, task in self._tasks.items():
+                if task.status != "started":
+                    continue
+                task.status = "failed"
+                task.error = reason
+                task.completed_at = datetime.now()
+                future = self._futures.get(task_id)
+                if future is not None:
+                    futures.append(future)
+            self._prune_locked()
+        # cancel() invokes callbacks synchronously, outside our task lock.
+        for future in futures:
+            future.cancel()
 
     def get_task(self, task_id):
         with self._lock:
@@ -142,7 +170,7 @@ class DownloadTaskManager:
                         + type(data).__name__)
                 with self._lock:
                     task = self._tasks.get(task_id)
-                    if task:
+                    if task and task.status == "running":
                         task.status = "running"
                         task.progress = {
                             "total": data.get("total"),
@@ -159,10 +187,8 @@ class DownloadTaskManager:
         return on_progress
 
     def _run_simple(self, func, task_id, _args=(), **kwargs):
-        with self._lock:
-            task = self._tasks.get(task_id)
-            if task:
-                task.status = "running"
+        if not self._begin_task(task_id):
+            return
         result = func(*_args, **kwargs)
         with self._lock:
             task = self._tasks.get(task_id)
@@ -170,20 +196,27 @@ class DownloadTaskManager:
                 task.result = serialize(result) if result is not None else None
 
     def _run_with_progress(self, func, task_id, progress_callback, _args=(), **kwargs):
-        with self._lock:
-            task = self._tasks.get(task_id)
-            if task:
-                task.status = "running"
+        if not self._begin_task(task_id):
+            return
         result = func(callback=progress_callback, *_args, **kwargs)
         with self._lock:
             task = self._tasks.get(task_id)
             if task:
                 task.result = serialize(result) if result is not None else None
 
-    def _on_done(self, task_id, future):
+    def _begin_task(self, task_id):
         with self._lock:
             task = self._tasks.get(task_id)
-            if task is None:
+            if task is None or task.status != "started":
+                return False
+            task.status = "running"
+            return True
+
+    def _on_done(self, task_id, future):
+        with self._lock:
+            self._futures.pop(task_id, None)
+            task = self._tasks.get(task_id)
+            if task is None or task.status == "failed":
                 return
             try:
                 if future.cancelled():

@@ -1,4 +1,5 @@
 import time
+import threading
 import pytest
 from qmt_rpyc.server.download_manager import DownloadTaskManager, DownloadTask, is_download_function
 
@@ -14,6 +15,44 @@ class TestIsDownloadFunction:
 
 
 class TestDownloadTaskManager:
+    @pytest.mark.parametrize("has_progress", [False, True])
+    def test_disconnect_fails_queued_work_without_replaying_or_stopping_running(
+            self, has_progress):
+        mgr = DownloadTaskManager(max_workers=1)
+        entered = threading.Event()
+        release = threading.Event()
+        invoked = []
+
+        def running():
+            entered.set()
+            assert release.wait(2)
+            return 42
+
+        try:
+            active = mgr.submit(running, function_name="active")
+            assert entered.wait(1)
+            pending = mgr.submit(
+                lambda **kwargs: invoked.append(True), function_name="queued",
+                has_progress=has_progress)
+            mgr.fail_pending("xtdata disconnected")
+            task = mgr.get_task(pending)
+            assert task["status"] == "failed"
+            assert task["error"] == "xtdata disconnected"
+            assert task["completed_at"] is not None
+            assert mgr.get_task(active)["status"] == "running"
+            # Even a late callback cannot revive a terminated task.
+            mgr._make_progress_callback(pending)({"finished": 1})
+            release.set()
+            mgr._executor.shutdown(wait=True)
+            assert mgr.get_task(active)["status"] == "completed"
+            assert mgr.get_task(active)["result"] == 42
+            assert mgr.get_task(pending)["status"] == "failed"
+            assert invoked == []
+            assert mgr._futures == {}
+        finally:
+            release.set()
+            mgr.shutdown()
+
     def test_submit_returns_task_id(self):
         mgr = DownloadTaskManager(max_workers=2)
         try:

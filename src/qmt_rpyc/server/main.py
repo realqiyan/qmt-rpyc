@@ -130,7 +130,8 @@ def _print_startup_info(cfg, cm):
     port = cfg["port"]
     auth = "on" if cfg["auth_key"] else "off"
     tls = "on" if cfg.get("tls_keyfile") and cfg.get("tls_certfile") else "off"
-    qmt = "connected" if cm.is_connected else "not connected"
+    health = cm.get_health_status()
+    qmt = health["connection_state"]
     account = _mask_account(cfg.get("qmt_account_id", ""))
 
     lines = [
@@ -141,6 +142,9 @@ def _print_startup_info(cfg, cm):
         "  Auth     : {}".format(auth),
         "  TLS      : {}".format(tls),
         "  QMT      : {}".format(qmt),
+        "  Failures : {}".format(health["consecutive_failures"]),
+        "  Retry at : {}".format(health["next_retry_at"] or "(none)"),
+        "  Error    : {}".format(health["last_connection_error"] or "(none)"),
         "  Account  : {}".format(account),
         "  Log dir  : {}".format(cfg.get("log_dir", "logs")),
         "=" * 56,
@@ -190,22 +194,15 @@ def start_server(cfg, tls=None):
             heartbeat_max_failures=cfg["heartbeat_max_failures"],
             reconnect_max_attempts=cfg["reconnect_max_attempts"],
         )
-        if not cm.start():
-            raise RuntimeError(
-                "QMT connection check failed; server was not started"
-            )
-
         dm = DownloadTaskManager(max_workers=2)
 
         XtquantService._require_auth = auth_key is not None
         XtquantService._connection_mgr = cm
         XtquantService._download_mgr = dm
         XtquantService._active_clients = 0
-        try:
-            XtquantService._api_surface = build_api_surface()
-        except ImportError:
-            logger.error("Cannot build API surface -- xtquant not available")
-            XtquantService._api_surface = {}
+        # Validate SDK imports before opening the listener. Local installation
+        # failures are fatal; Trader construction and connection run separately.
+        XtquantService._api_surface = build_api_surface()
 
         authenticator = (
             make_server_authenticator(auth_key, rate_limiter)
@@ -240,6 +237,7 @@ def start_server(cfg, tls=None):
                 XtquantService, hostname=host, port=port,
                 protocol_config=config, authenticator=authenticator)
 
+        cm.start()
         _print_startup_info(cfg, cm)
         logger.info("Starting RPyC server on %s:%d", host, port)
         server.start()

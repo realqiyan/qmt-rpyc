@@ -1,4 +1,5 @@
 import ssl
+import threading
 
 import pytest
 
@@ -43,6 +44,69 @@ def test_config_requires_complete_tls_pair():
         _validate_config(_config(tls_keyfile="server.key"))
 
 
+def test_server_serves_health_and_discovery_during_blocked_qmt_init(monkeypatch):
+    import qmt_rpyc.server.api_surface as api_surface
+    from qmt_rpyc.server.connection import ConnectionManager
+    from qmt_rpyc.server.service import XtquantService
+    import rpyc.utils.server
+
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+    surface = {"xtdata": {"functions": {"example": {}}}}
+
+    def blocked_init(self):
+        entered.set()
+        assert release.wait(2)
+
+    class FakeServer:
+        def __init__(self, *args, **kwargs):
+            calls.append("listener created")
+            assert not entered.is_set()
+
+        def start(self):
+            try:
+                assert entered.wait(1)
+                service = XtquantService()
+                health = service.exposed_health()
+                assert health["connected"] is False
+                assert health["connection_state"] == "connecting"
+                assert service.exposed_get_api_surface() == surface
+                calls.append("rpc available")
+            finally:
+                release.set()
+
+        def close(self):
+            release.set()
+
+    monkeypatch.setattr(ConnectionManager, "_init_trader", blocked_init)
+    monkeypatch.setattr(api_surface, "build_api_surface", lambda: surface)
+    monkeypatch.setattr(rpyc.utils.server, "ThreadedServer", FakeServer)
+    try:
+        assert start_server(_config(auth_key=None, allow_insecure=True)) == 0
+        assert calls == ["listener created", "rpc available"]
+    finally:
+        release.set()
+
+
+def test_missing_sdk_fails_before_listener_or_background_attempt(monkeypatch):
+    import qmt_rpyc.server.api_surface as api_surface
+    from qmt_rpyc.server.connection import ConnectionManager
+    import rpyc.utils.server
+
+    def missing_sdk():
+        raise ImportError("missing SDK")
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("listener/connection must not start with a broken SDK")
+
+    monkeypatch.setattr(api_surface, "build_api_surface", missing_sdk)
+    monkeypatch.setattr(ConnectionManager, "start", unexpected)
+    monkeypatch.setattr(rpyc.utils.server, "ThreadedServer", unexpected)
+    with pytest.raises(ImportError, match="missing SDK"):
+        start_server(_config())
+
+
 def test_tls_uses_server_context_and_cleanup_order(monkeypatch):
     import socket
     import qmt_rpyc.server.api_surface as api_surface
@@ -63,6 +127,10 @@ def test_tls_uses_server_context_and_cleanup_order(monkeypatch):
 
         def stop(self):
             calls.append("cm.stop")
+
+        def get_health_status(self):
+            return {"connection_state": "connected", "consecutive_failures": 0,
+                    "next_retry_at": None, "last_connection_error": ""}
 
     class FakeDownloadManager:
         def __init__(self, max_workers):

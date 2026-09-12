@@ -23,7 +23,7 @@ from PyPI:
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple --pre \
-  "qmt-rpyc[server]==0.3.1rc1"
+  "qmt-rpyc[server]==0.3.1rc2"
 ```
 
 Server, on Windows with Python 3.10 or 3.11:
@@ -34,6 +34,18 @@ qmt-rpyc-server init
 qmt-rpyc-server check
 qmt-rpyc-server start
 ```
+
+The RPC server starts independently of the trading connection. Its first
+background connection attempt runs immediately; failures wait 10 seconds,
+30 seconds, 1 minute, then 10 minutes between subsequent attempts. Retries
+are unlimited by default. Recovery resumes heartbeats and resets the retry
+schedule. Invalid local configuration, SDK import failures, and occupied
+ports still fail startup.
+
+`client.health()` preserves existing fields and adds `connection_state`,
+`consecutive_failures`, `last_connection_error`, and `next_retry_at`.
+An available RPC connection does not imply trading readiness. Disconnected
+trading requests fail without queuing or replay.
 
 Python:
 
