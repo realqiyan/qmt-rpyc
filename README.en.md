@@ -17,13 +17,19 @@ qmt-rpyc-client init --profile office
 qmt-rpyc-client check --profile office
 ```
 
-To install a Windows server RC from TestPyPI while resolving dependencies
+To pin the Windows server version:
+
+```bash
+python -m pip install "qmt-rpyc[server]==0.3.1"
+```
+
+Release candidates are published to TestPyPI and must resolve dependencies
 from PyPI:
 
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple --pre \
-  "qmt-rpyc[server]==0.3.1rc2"
+  "qmt-rpyc[server]==<version>"
 ```
 
 Server, on Windows with Python 3.10 or 3.11:
@@ -46,6 +52,16 @@ ports still fail startup.
 `consecutive_failures`, `last_connection_error`, and `next_retry_at`.
 An available RPC connection does not imply trading readiness. Disconnected
 trading requests fail without queuing or replay.
+
+Current limitations, not yet implemented:
+
+- Local-query completeness checks and degraded fallback are not implemented;
+  xtdata forwarding keeps its previous behavior and an incomplete range is
+  not reported as a distinguishable error.
+- Download termination on disconnect is not wired to connection state, so
+  `fail_pending` has no effect yet.
+- The 10-minute retry tier and recovery from a disconnect during a running
+  session have not been verified against real QMT.
 
 Python:
 

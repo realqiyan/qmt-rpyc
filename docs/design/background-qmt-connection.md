@@ -31,13 +31,25 @@
 - 用户明确纠正：维护导致旧服务无法启动正是本次要解决的问题，不能要求旧 RPC 先恢复作为修复前提。先用模拟维护故障验证新服务冷启动并提供修复包；SDK 调查使用 Windows 本机的 `qmt-rpyc-server api dump --output api_surface.json`，该命令只导入及反射 SDK，不构造 Trader、不调用连接，也不访问 RPC。实际 SDK 导入本身的副作用仍需部署验证。
 - 仓库没有实际部署 SDK 清单或覆盖证据，只有 mock 示例。本地 API 导出用于核对候选接口，不能代替离线读取、独立行情连接和完整性判据的行为验证；这些待验证项不阻止启动修复的交付。
 - `qmt-rpyc-server check` 原先依据 `start()` 的返回值判断连接，而 `start()` 现在只表示已调度后台连接，会导致 QMT 不可达时仍报告连接成功。已改为调用同步的 `probe()`，并补充回归用例。
-- 本地验证：`.venv/bin/python -m pytest tests/ -q`，193 通过、60 跳过；新增真实回环 RPC 的冷启动回归，模拟持续连接失败时验证认证和 API 发现，再在同一 RPC 连接上观察自动恢复。模拟 SDK 验证不等同于实际 Windows/QMT 验证。
-- 上述改动已提交并标记为 `v0.3.1rc2`，经 GitHub Actions 发到 TestPyPI 供 Windows 实机验证；本次只发测试版，未提升为稳定版本。
+- 本地验证：`.venv/bin/python -m pytest tests/ -q`，200 通过、60 跳过；新增真实回环 RPC 的冷启动回归，模拟持续连接失败时验证认证和 API 发现，再在同一 RPC 连接上观察自动恢复。模拟 SDK 验证不等同于实际 Windows/QMT 验证。
+- 上述改动已提交并标记为 `v0.3.1rc2`，经 GitHub Actions 发到 TestPyPI；实机验证通过后提升为 `0.3.1` 正式版。
+
+## 实机验证结果（2026-09-12，Windows + 券商定制 SDK）
+
+`v0.3.1rc2` 在 MiniQMT 未运行时冷启动，一次连续观测覆盖了 Q1/Q2/Q4/Q6/Q9：
+
+- RPC 先于任何成功的 Trader 连接启动：启动横幅 `QMT : connecting`、`server started on [0.0.0.0]:18812` 与 `Reconnect attempt 1 (delay=0s)` 同一毫秒，随后才出现连接失败。
+- 首次立即尝试，失败后等待 10 秒、30 秒、60 秒，与 `RECONNECT_BACKOFF` 一致；等待期间每次只记录一行，未刷屏。
+- 第 4 次尝试成功：账户订阅成功、心跳启动、`Reconnect successful after 4 attempt(s)`；恢复后 `status` 显示 `connection_state=connected`、`reconnect_attempts=0`、`consecutive_failures=0`、`last_connection_error=""`，即计数与错误信息已清零。
+- 恢复后本机与另一台内网客户端依次完成 HMAC 认证、拿到 API surface；`health()` 新字段透传到客户端。
+- 维护故障是**普通连接失败**，不是原生调用阻塞：`Trader.connect` 约 3 秒返回 -1。SDK 导入也未阻塞启动（与首次尝试同毫秒完成），这回答了下方"实际维护故障形态"问题的一半。
+- 未覆盖：**600 秒档位**（重试到第 4 次即恢复，该档从第 5 次起才生效）；**运行中断线恢复**，即 `on_disconnected` → `mark_disconnected(publish_event=True)` → 重新调度这条路径在真实 SDK 上尚未走过；**xtdata 在维护期间的行为**，仍无实机结论。
+- `_reset_trader()` 每次重试都重建原生 Trader（日志中每次都有 `Discovered 35 Trader methods` 与 `XtQuantTrader initialized`），本次 4 次未见异常；稳态下每小时 6 次，成本可忽略，但"原生初始化不可强制取消"的风险仍在。
 
 ## 实现前与部署验证
 
 - 核实实际部署支持的本地查询接口、参数和返回语义，以及能否取得可靠的覆盖证据。日历、停牌、上市区间等会影响预期数据；不能简单以自然日条数、首尾日期或非空结果判定完整。
-- 核实实际维护故障是普通连接失败还是原生调用阻塞，并验证 SDK 导入与行情连接在维护期间的行为。
+- 核实实际维护故障是普通连接失败还是原生调用阻塞，并验证 SDK 导入与行情连接在维护期间的行为。已确认维护期 Trader 连接失败为普通失败、SDK 导入不阻塞启动；xtdata 在维护期间能否读取本地数据仍待验证。
 - 确定下载所依赖连接的可靠判据；保持 Trader 与 xtdata 可用性独立。
 
 ## 验收场景

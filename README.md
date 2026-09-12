@@ -5,7 +5,7 @@
 qmt-rpyc 通过 RPyC 将 Windows QMT/MiniQMT 中的 broker-customized
 `xtquant` SDK 暴露给 Linux、macOS 和 Windows 客户端。
 
-> 当前版本为 `0.3.1rc2`。请先在模拟或只读环境验证，再用于实盘。
+> 当前版本为 `0.3.1`。请先在模拟或只读环境验证，再用于实盘。
 
 ## 安装
 
@@ -19,12 +19,18 @@ qmt-rpyc-client init --profile office
 qmt-rpyc-client check --profile office
 ```
 
-在 Windows 服务端测试 TestPyPI 上的 RC 时，正式 PyPI 必须作为依赖来源：
+Windows 服务端固定版本安装：
+
+```bat
+py -3.11 -m pip install "qmt-rpyc[server]==0.3.1"
+```
+
+后续候选版本发布在 TestPyPI 上，安装时必须以正式 PyPI 作为依赖来源：
 
 ```bat
 py -3.11 -m pip install --index-url https://pypi.org/simple ^
   --extra-index-url https://test.pypi.org/simple --pre ^
-  "qmt-rpyc[server]==0.3.1rc2"
+  "qmt-rpyc[server]==<版本>"
 ```
 
 Python SDK：
@@ -90,6 +96,13 @@ SDK 无法导入、认证配置无效或端口占用等本机启动错误仍会�
 （`connecting`、`waiting_retry`、`connected` 等）、`consecutive_failures`、
 `last_connection_error` 和 `next_retry_at`。RPC 可连接不表示交易连接可用；
 未连接的交易请求直接报错，不排队或重放。
+
+当前限制（尚未实现，不要按已交付使用）：
+
+- 本地数据完整性判据与断线降级分流未实现，xtdata 转发保持原有行为；
+  数据缺失或范围不完整时不会给出可区分的错误。
+- 下载任务的断线终止规则未接入连接状态检测，`fail_pending` 尚未生效。
+- 10 分钟重试档位，以及运行中断线后的自动恢复，尚未在实际 QMT 上验证。
 
 ## 动态 CLI
 

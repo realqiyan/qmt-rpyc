@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.1] - 2026-09-12
+
+Stable release of the changes described under 0.3.1rc1 and 0.3.1rc2.
+
+Validated on Windows against the deployed broker-customized SDK: with MiniQMT
+stopped, the RPC server started, served authentication, API discovery, and
+health while the connection was down, then connected on its fourth background
+attempt after waiting 10s, 30s, and 60s, without restarting the service.
+Maintenance failures were ordinary `Trader.connect` failures returning after
+about three seconds, not blocked native calls.
+
+### Changed
+
+- Server logs now mask account ids the same way as the startup summary, so
+  `Subscribed to account ...` no longer writes the full account id.
+
+### Not yet implemented
+
+- Local-query completeness checks and degraded fallback (Q3/Q7/Q10): xtdata
+  forwarding keeps its previous behavior, and a missing or incomplete range
+  is not reported as a distinguishable error.
+- The disconnect rule for downloads (Q8):
+  `DownloadTaskManager.fail_pending()` exists but is not wired to
+  connection-state detection.
+- The 10-minute retry tier and recovery from a disconnect during a running
+  session have not been observed on real QMT.
+
 ## [0.3.1rc2] - 2026-09-12
 
 ### Added

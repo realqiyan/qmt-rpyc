@@ -80,6 +80,22 @@ class TestConnectionManager:
         finally:
             cm.stop()
 
+    def test_subscribe_log_does_not_contain_the_raw_account(
+            self, mock_xtquant, caplog):
+        import logging
+
+        from qmt_rpyc.server.connection import ConnectionManager
+
+        cm = ConnectionManager("test", 1, "123456789012")
+        try:
+            with caplog.at_level(logging.INFO,
+                                 logger="qmt_rpyc.server.connection"):
+                assert cm.probe()
+            assert "Subscribed to account 12********12" in caplog.text
+            assert "123456789012" not in caplog.text
+        finally:
+            cm.stop()
+
     @pytest.mark.parametrize("stage", ["init", "connect", "subscribe"])
     def test_failed_initial_attempt_recovers_with_heartbeat(
             self, mock_xtquant, monkeypatch, stage):

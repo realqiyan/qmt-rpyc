@@ -11,6 +11,7 @@ import numpy
 import qmt_rpyc.server.datetime_patch
 
 from qmt_rpyc.server.logging_config import setup_logging
+from qmt_rpyc.server.redaction import mask_account
 
 logger = logging.getLogger(__name__)
 _crash_fp = None
@@ -117,13 +118,6 @@ def _validate_config(cfg):
             "QMT_RPYC_TLS_KEY and QMT_RPYC_TLS_CERT must be configured together")
 
 
-def _mask_account(account_id):
-    """Return a masked version of account_id for display."""
-    if not account_id or len(account_id) <= 4:
-        return account_id or "(none)"
-    return account_id[:2] + "*" * (len(account_id) - 4) + account_id[-2:]
-
-
 def _print_startup_info(cfg, cm):
     """Print a one-shot startup summary to stdout. No sensitive fields."""
     host = cfg["host"]
@@ -132,7 +126,7 @@ def _print_startup_info(cfg, cm):
     tls = "on" if cfg.get("tls_keyfile") and cfg.get("tls_certfile") else "off"
     health = cm.get_health_status()
     qmt = health["connection_state"]
-    account = _mask_account(cfg.get("qmt_account_id", ""))
+    account = mask_account(cfg.get("qmt_account_id", ""))
 
     lines = [
         "=" * 56,

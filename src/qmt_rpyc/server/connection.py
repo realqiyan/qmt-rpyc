@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from qmt_rpyc.protocol import STATUS_OK, STATUS_ERROR
+from qmt_rpyc.server.redaction import mask_account
 from qmt_rpyc.server.serializer import serialize
 from qmt_rpyc.server.event_bus import event_bus
 
@@ -370,10 +371,11 @@ class ConnectionManager:
             with native_lock:
                 result = trader.subscribe(acc)
             if result == 0:
-                logger.info("Subscribed to account %s", account_id)
+                logger.info("Subscribed to account %s",
+                            mask_account(account_id))
                 return True
             logger.warning("subscribe returned %s for account %s",
-                           result, account_id)
+                           result, mask_account(account_id))
             return False
         except Exception as e:
             logger.error("subscribe failed: %s", e)
