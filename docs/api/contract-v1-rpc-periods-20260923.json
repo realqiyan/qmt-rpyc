@@ -1,0 +1,423 @@
+{
+  "collection_scope": "read_only_rpc_parameter_variants",
+  "client_version": "0.3.1",
+  "generated_at_utc": "2026-09-23T18:37:40.023974+00:00",
+  "calls": [
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "5m",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "ok",
+      "sampling": [
+        {
+          "path": "$.510050.SH",
+          "kind": "split_table",
+          "rows": 0,
+          "columns": 10,
+          "rows_retained": 0
+        }
+      ],
+      "result": {
+        "510050.SH": {
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "settelementPrice",
+            "openInterest",
+            "preClose",
+            "suspendFlag"
+          ],
+          "index": [],
+          "data": []
+        }
+      }
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "15m",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "ok",
+      "sampling": [
+        {
+          "path": "$.510050.SH",
+          "kind": "split_table",
+          "rows": 0,
+          "columns": 10,
+          "rows_retained": 0
+        }
+      ],
+      "result": {
+        "510050.SH": {
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "settelementPrice",
+            "openInterest",
+            "preClose",
+            "suspendFlag"
+          ],
+          "index": [],
+          "data": []
+        }
+      }
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "30m",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "ok",
+      "sampling": [
+        {
+          "path": "$.510050.SH",
+          "kind": "split_table",
+          "rows": 0,
+          "columns": 10,
+          "rows_retained": 0
+        }
+      ],
+      "result": {
+        "510050.SH": {
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "settelementPrice",
+            "openInterest",
+            "preClose",
+            "suspendFlag"
+          ],
+          "index": [],
+          "data": []
+        }
+      }
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "1h",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "ok",
+      "sampling": [
+        {
+          "path": "$.510050.SH",
+          "kind": "split_table",
+          "rows": 0,
+          "columns": 10,
+          "rows_retained": 0
+        }
+      ],
+      "result": {
+        "510050.SH": {
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "settelementPrice",
+            "openInterest",
+            "preClose",
+            "suspendFlag"
+          ],
+          "index": [],
+          "data": []
+        }
+      }
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "60m",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "error",
+      "error_type": "RemoteCallError",
+      "remote_error_type": "TypeError"
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "1w",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "error",
+      "error_type": "RemoteCallError",
+      "remote_error_type": "TypeError"
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "1wk",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "error",
+      "error_type": "RemoteCallError",
+      "remote_error_type": "TypeError"
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "1mon",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "error",
+      "error_type": "RemoteCallError",
+      "remote_error_type": "TypeError"
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [
+          "time",
+          "open",
+          "close",
+          "volume"
+        ],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "1d",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "ok",
+      "sampling": [
+        {
+          "path": "$.510050.SH",
+          "kind": "split_table",
+          "rows": 2,
+          "columns": 4,
+          "rows_retained": 2
+        }
+      ],
+      "result": {
+        "510050.SH": {
+          "columns": [
+            "time",
+            "open",
+            "close",
+            "volume"
+          ],
+          "index": [
+            20260917,
+            20260918
+          ],
+          "data": [
+            [
+              1789574400000,
+              2.972,
+              2.9579999999999997,
+              4833433
+            ],
+            [
+              1789660800000,
+              2.969,
+              2.975,
+              4851416
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [
+          "time",
+          "open",
+          "close",
+          "volume"
+        ],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "1m",
+        "start_time": "20260901",
+        "end_time": "20260923",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "ok",
+      "sampling": [
+        {
+          "path": "$.510050.SH",
+          "kind": "split_table",
+          "rows": 0,
+          "columns": 4,
+          "rows_retained": 0
+        }
+      ],
+      "result": {
+        "510050.SH": {
+          "columns": [
+            "time",
+            "open",
+            "close",
+            "volume"
+          ],
+          "index": [],
+          "data": []
+        }
+      }
+    },
+    {
+      "api": "get_market_data_ex",
+      "args": [
+        [],
+        [
+          "510050.SH"
+        ]
+      ],
+      "kwargs": {
+        "period": "1d",
+        "start_time": "20000101",
+        "end_time": "20000103",
+        "count": 2,
+        "dividend_type": "none",
+        "fill_data": true
+      },
+      "status": "ok",
+      "sampling": [
+        {
+          "path": "$.510050.SH",
+          "kind": "split_table",
+          "rows": 0,
+          "columns": 10,
+          "rows_retained": 0
+        }
+      ],
+      "result": {
+        "510050.SH": {
+          "columns": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "settelementPrice",
+            "openInterest",
+            "preClose",
+            "suspendFlag"
+          ],
+          "index": [],
+          "data": []
+        }
+      }
+    }
+  ],
+  "server": {
+    "package_version": "0.3.1",
+    "protocol_version": 1,
+    "schema_version": 1
+  },
+  "collection_status": "completed",
+  "completed_at_utc": "2026-09-23T18:37:40.925173+00:00"
+}

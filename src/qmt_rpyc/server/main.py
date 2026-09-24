@@ -12,6 +12,7 @@ import qmt_rpyc.server.datetime_patch
 
 from qmt_rpyc.server.logging_config import setup_logging
 from qmt_rpyc.server.redaction import mask_account
+from qmt_rpyc.version import __version__
 
 logger = logging.getLogger(__name__)
 _crash_fp = None
@@ -132,6 +133,7 @@ def _print_startup_info(cfg, cm):
         "=" * 56,
         "  qmt-rpyc server",
         "=" * 56,
+        "  Version  : {}".format(__version__),
         "  Listen   : {}:{}".format(host, port),
         "  Auth     : {}".format(auth),
         "  TLS      : {}".format(tls),
@@ -149,6 +151,7 @@ def _print_startup_info(cfg, cm):
 
 def start_server(cfg, tls=None):
     _validate_config(cfg)
+    logger.info("Starting qmt-rpyc server %s", __version__)
     cfg = dict(cfg)
     auth_key = cfg.get("auth_key")
     if (not isinstance(auth_key, str) or not auth_key.strip()
@@ -163,7 +166,7 @@ def start_server(cfg, tls=None):
     from qmt_rpyc.server.service import XtquantService
     from qmt_rpyc.server.connection import ConnectionManager
     from qmt_rpyc.server.download_manager import DownloadTaskManager
-    from qmt_rpyc.server.api_surface import build_api_surface
+    from qmt_rpyc.server.adapters import create_dispatcher
     from qmt_rpyc.server.auth_limiter import rate_limiter
     from qmt_rpyc.protocol import make_server_authenticator
 
@@ -196,7 +199,8 @@ def start_server(cfg, tls=None):
         XtquantService._active_clients = 0
         # Validate SDK imports before opening the listener. Local installation
         # failures are fatal; Trader construction and connection run separately.
-        XtquantService._api_surface = build_api_surface()
+        XtquantService._dispatcher = create_dispatcher(cm)
+        XtquantService._api_surface = XtquantService._dispatcher.surface()
 
         authenticator = (
             make_server_authenticator(auth_key, rate_limiter)

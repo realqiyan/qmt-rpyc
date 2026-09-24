@@ -15,27 +15,27 @@ class FakeClient:
 class TestRemoteCallable:
     def test_call_forwards_to_client(self):
         client = FakeClient()
-        callable_obj = _RemoteCallable(client, "xtdata", "get_market_data",
+        callable_obj = _RemoteCallable(client, "xtdata", "get_market_data_ex",
                                         {"signature": "()", "doc": "test"})
         result = callable_obj([], ["600000.SH"], "1d")
-        assert result == {"result": "xtdata.get_market_data"}
-        assert client.calls[-1] == ("xtdata", "get_market_data", ([], ["600000.SH"], "1d"), {})
+        assert result == {"result": "xtdata.get_market_data_ex"}
+        assert client.calls[-1] == ("xtdata", "get_market_data_ex", ([], ["600000.SH"], "1d"), {})
 
     def test_preserves_doc_and_name(self):
         client = FakeClient()
-        callable_obj = _RemoteCallable(client, "xtdata", "get_market_data",
+        callable_obj = _RemoteCallable(client, "xtdata", "get_market_data_ex",
                                         {"signature": "()", "doc": "获取行情数据"})
         assert callable_obj.__doc__ == "获取行情数据"
-        assert callable_obj.__name__ == "get_market_data"
+        assert callable_obj.__name__ == "get_market_data_ex"
 
 
 class TestRemoteModule:
     def test_builds_functions(self):
         client = FakeClient()
-        desc = {"functions": {"get_market_data": {"signature": "()", "doc": "test"}}}
+        desc = {"functions": {"get_market_data_ex": {"signature": "()", "doc": "test"}}}
         mod = _RemoteModule(client, "xtdata", desc)
-        assert hasattr(mod, "get_market_data")
-        assert isinstance(mod.get_market_data, _RemoteCallable)
+        assert hasattr(mod, "get_market_data_ex")
+        assert isinstance(mod.get_market_data_ex, _RemoteCallable)
 
     def test_builds_constants(self):
         client = FakeClient()
@@ -46,11 +46,11 @@ class TestRemoteModule:
 
     def test_dir(self):
         client = FakeClient()
-        desc = {"functions": {"get_market_data": {"signature": "()", "doc": "t"}},
+        desc = {"functions": {"get_market_data_ex": {"signature": "()", "doc": "t"}},
                 "constants": {"STOCK_BUY": 23}}
-        mod = _RemoteModule(client, "xtconstant", desc)
+        mod = _RemoteModule(client, "xtdata", desc)
         d = dir(mod)
-        assert "get_market_data" in d
+        assert "get_market_data_ex" in d
         assert "STOCK_BUY" in d
 
 
@@ -58,17 +58,17 @@ class TestRemoteTrader:
     def test_builds_methods(self):
         client = FakeClient()
         desc = {"methods": {"order_stock": {"signature": "()", "doc": "下单"},
-                             "connect": {"signature": "()", "doc": "连接"}}}
+                             "cancel_order_stock": {"signature": "()", "doc": "连接"}}}
         trader = _RemoteTrader(client, desc)
         assert hasattr(trader, "order_stock")
-        assert hasattr(trader, "connect")
+        assert hasattr(trader, "cancel_order_stock")
         assert isinstance(trader.order_stock, _RemoteCallable)
 
-    def test_unknown_public_method_uses_fallback(self):
+    def test_unknown_public_method_is_rejected(self):
         client = FakeClient()
         trader = _RemoteTrader(client, {"methods": {}})
-        result = trader.version_specific_method("ACC1")
-        assert result == {"result": "trader.version_specific_method"}
+        with pytest.raises(AttributeError):
+            trader.version_specific_method("ACC1")
 
     def test_private_method_is_rejected(self):
         client = FakeClient()

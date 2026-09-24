@@ -15,7 +15,8 @@ from qmt_rpyc.version import __version__
 from qmt_rpyc.protocol import PROTOCOL_VERSION
 from qmt_rpyc.server.event_bus import event_bus
 from qmt_rpyc.server.download_manager import is_download_function
-from qmt_rpyc.server.serializer import serialize
+from qmt_rpyc.contract import CONTRACT_VERSION, ContractFailure, manifest
+from qmt_rpyc.server.adapters import create_dispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -128,17 +129,8 @@ def _error(error_type, message):
     }
 
 
-def _execute_one(name, args, kwargs):
-    """Execute a single xtdata call, return {"status", "data"}.
-
-    Standalone function (not a method) for executor compatibility.
-    Exceptions propagate to the caller — the batch loop catches them.
-    """
-    from xtquant import xtdata as _xtdata
-
-    fn = getattr(_xtdata, name)
-    raw = fn(*args, **kwargs)
-    return {"status": STATUS_OK, "data": serialize(raw)}
+def _execute_one(name, args, kwargs, dispatcher):
+    return dispatcher.call('xtdata.' + name, args, kwargs)
 
 
 try:
@@ -156,6 +148,7 @@ class XtquantService(rpyc.Service):
     _connection_mgr = None
     _download_mgr = None
     _api_surface = None
+    _dispatcher = None
     _active_clients = 0
     _active_clients_lock = threading.Lock()
 
@@ -206,113 +199,49 @@ class XtquantService(rpyc.Service):
 
     @classmethod
     def _allowed_names(cls, surface, key):
-        descriptor = (cls._api_surface or {}).get(surface, {})
-        return descriptor.get(key, {})
+        return manifest().get(surface, {}).get(key, {})
 
-    def exposed_get_api_surface(self):
+    def _contract(self):
+        if self.__class__._dispatcher is None:
+            self.__class__._dispatcher = create_dispatcher(self.__class__._connection_mgr)
+        return self.__class__._dispatcher
+
+    def exposed_get_api_surface(self, supported_contracts=None):
         self._require_authed()
-        self._log_request("get_api_surface")
-        return self.__class__._api_surface
+        if supported_contracts is not None and CONTRACT_VERSION not in _materialize(supported_contracts):
+            return ContractFailure('ContractVersion', '', 'no common bridge contract').response()
+        return self._contract().surface()
+
+    def _dispatch(self, surface, name, args, kwargs):
+        api = surface + '.' + str(name)
+        try:
+            args = _materialize(args)
+            kwargs = _materialize(kwargs)
+            dispatcher = self._contract()
+            parameters = dispatcher.prepare(api, args, kwargs)
+            if surface == 'xtdata' and is_download_function(name):
+                task_id = self.__class__._download_mgr.submit(
+                    dispatcher.execute, function_name=name, _args=(api, parameters))
+                return {'status': STATUS_OK, 'data': {
+                    'task_id': task_id, '_is_download_task': True}}
+            return {'status': STATUS_OK, 'data': dispatcher.execute(api, parameters)}
+        except ContractFailure as e:
+            return e.response()
+        except Exception:
+            logger.exception('Bridge dispatch failed for %s', api)
+            return ContractFailure('BridgeError', api, 'bridge dispatch failed',
+                                   'dispatch', 'unknown' if surface == 'trader' else 'not_applicable').response()
 
     def exposed_call_xtdata(self, name, args, kwargs):
         self._require_authed()
-        try:
-            arg_str = _summarize_args(args, kwargs)
-        except Exception:
-            arg_str = "<summarize failed>"
-        self._log_request("call_xtdata", "fn=%s(%s)" % (name, arg_str))
-
-        allowed = self._allowed_names("xtdata", "functions")
-        if name not in allowed:
-            result = _error(
-                "AttributeError",
-                f"xtdata function {name!r} is not in the API allowlist",
-            )
-        elif is_download_function(name):
-            result = self._submit_download(name, args, kwargs)
-        elif xtdata is None:
-            result = {"status": STATUS_ERROR, "error_type": "ImportError",
-                      "error_message": "xtquant not available"}
-        else:
-            fn = getattr(xtdata, name, None)
-            if fn is None:
-                result = {"status": STATUS_ERROR, "error_type": "AttributeError",
-                          "error_message": f"xtdata has no attribute {name!r}"}
-            else:
-                try:
-                    # Materialize RPyC netref proxies → plain Python objects.
-                    # pybind11 (xtquant's C++ layer) rejects netref lists/dicts
-                    # because its strict type checking only accepts builtins.
-                    args = [_materialize(a) for a in args]
-                    kwargs = {k: _materialize(v) for k, v in kwargs.items()}
-                    raw = fn(*args, **kwargs)
-                    result = {"status": STATUS_OK, "data": serialize(raw)}
-                except Exception as e:
-                    logger.warning("call_xtdata(%s) raised %s: %s",
-                                   name, type(e).__name__, e)
-                    result = {"status": STATUS_ERROR, "error_type": type(e).__name__,
-                              "error_message": str(e)}
-
-        try:
-            result_summary = _summarize_rpc_result(result)
-        except Exception:
-            result_summary = "<summarize failed>"
-        self._log_request("call_xtdata", "fn=%s => %s" % (name, result_summary))
+        result = self._dispatch('xtdata', name, args, kwargs)
+        self._log_request('call_xtdata', '{} => {}'.format(name, _summarize_rpc_result(result)))
         return result
-
-    def _submit_download(self, name, args, kwargs):
-        if xtdata is None:
-            return {"status": STATUS_ERROR, "error_type": "ImportError",
-                    "error_message": "xtquant not available"}
-        fn = getattr(xtdata, name, None)
-        if fn is None:
-            return {"status": STATUS_ERROR, "error_type": "AttributeError",
-                    "error_message": f"xtdata has no attribute {name!r}"}
-        try:
-            args = [_materialize(a) for a in args]
-            kwargs = {k: _materialize(v) for k, v in kwargs.items()}
-            task_id = self.__class__._download_mgr.submit(
-                fn, function_name=name, has_progress=False, _args=args, **kwargs)
-            return {"status": STATUS_OK, "data": {"task_id": task_id, "_is_download_task": True}}
-        except Exception as e:
-            return {"status": STATUS_ERROR, "error_type": type(e).__name__,
-                    "error_message": str(e)}
 
     def exposed_call_trader(self, name, args, kwargs):
         self._require_authed()
-        try:
-            arg_str = "args={!r}, kwargs={!r}".format(
-                list(args), dict(kwargs)
-            )
-        except Exception:
-            arg_str = "<summarize failed>"
-        self._log_request("call_trader", "method=%s(%s)" % (name, arg_str))
-        allowed = self._allowed_names("XtQuantTrader", "methods")
-        cm = self.__class__._connection_mgr
-        if name not in allowed:
-            result = _error(
-                "AttributeError",
-                f"trader method {name!r} is not in the API allowlist",
-            )
-        elif cm is None:
-            result = {"status": STATUS_ERROR, "error_type": "NotConnected",
-                      "error_message": "connection manager not configured"}
-        else:
-            try:
-                args = [_materialize(a) for a in args]
-                kwargs = {k: _materialize(v) for k, v in kwargs.items()}
-                result = cm.call_trader_method(name, args, kwargs)
-            except Exception as e:
-                logger.warning(
-                    "materialize trader arguments failed",
-                    exc_info=True,
-                )
-                result = _error(type(e).__name__, str(e))
-        try:
-            result_summary = repr(result)
-        except Exception:
-            result_summary = "<summarize failed>"
-        self._log_request("call_trader", "method=%s => %s" % (name, result_summary))
+        result = self._dispatch('trader', name, args, kwargs)
+        self._log_request('call_trader', '{} => {}'.format(name, _summarize_rpc_result(result)))
         return result
 
     def exposed_health(self):
@@ -329,50 +258,9 @@ class XtquantService(rpyc.Service):
         result["download_tasks"] = dm.get_stats() if dm is not None else {}
         result["package_version"] = __version__
         result["protocol_version"] = PROTOCOL_VERSION
+        result["contract_version"] = CONTRACT_VERSION
+        result["capabilities"] = self._contract().surface()["capabilities"]
         return result
-
-    def exposed_subscribe_event(self, event_types, account_id=None):
-        self._require_authed()
-        self._log_request("subscribe_event", "types=%s account=%s" % (event_types, account_id))
-        event_types = _materialize(event_types)
-        if not isinstance(event_types, (list, tuple, set)):
-            raise TypeError("event_types must be a list, tuple, or set")
-        event_types = list(event_types)
-        if not event_types:
-            raise ValueError("event_types must not be empty")
-        if any(not isinstance(event_type, str) for event_type in event_types):
-            raise TypeError("each event type must be a string")
-        unknown = sorted(set(event_types) - set(EVENT_TYPES))
-        if unknown:
-            raise ValueError(
-                "unsupported event types: " + ", ".join(unknown))
-        if account_id is not None and not isinstance(account_id, str):
-            raise TypeError("account_id must be a string or None")
-        sub_id = event_bus.subscribe(event_types, account_id)
-        self._subscription_ids.add(sub_id)
-        return sub_id
-
-    def exposed_unsubscribe_event(self, sub_id):
-        self._require_authed()
-        self._log_request("unsubscribe_event", "sub_id=%s" % sub_id)
-        if sub_id not in self._subscription_ids:
-            return False
-        self._subscription_ids.discard(sub_id)
-        return event_bus.unsubscribe(sub_id)
-
-    def exposed_poll_events(self, sub_id, max_count=100):
-        self._require_authed()
-        self._log_request("poll_events", "sub_id=%s max=%s" % (sub_id, max_count), level=logging.DEBUG)
-        if sub_id not in self._subscription_ids:
-            return [], 0
-        if (not isinstance(max_count, int) or isinstance(max_count, bool)
-                or not 1 <= max_count <= _EVENT_POLL_MAX_COUNT):
-            raise ValueError(
-                f"max_count must be between 1 and {_EVENT_POLL_MAX_COUNT}")
-        sub = event_bus.get_subscription(sub_id)
-        if sub is None:
-            return [], 0
-        return sub.drain(max_count)
 
     def exposed_query_download(self, task_id):
         self._require_authed()
@@ -384,6 +272,13 @@ class XtquantService(rpyc.Service):
         return {"status": STATUS_OK, "data": task}
 
     def exposed_batch_call_xtdata(self, name, calls):
+        result = self._batch_call_xtdata(name, calls)
+        if result.get('status') == STATUS_ERROR:
+            return {**ContractFailure(result['error_type'], 'xtdata.' + str(name),
+                                      result['error_message']).response(), **result}
+        return result
+
+    def _batch_call_xtdata(self, name, calls):
         self._require_authed()
 
         # ── deserialise calls (JSON string from new clients,
@@ -403,14 +298,9 @@ class XtquantService(rpyc.Service):
         allowed = self._allowed_names("xtdata", "functions")
         if name not in allowed:
             return _error(
-                "AttributeError",
+                "UnknownAPI",
                 f"xtdata function {name!r} is not in the API allowlist",
             )
-
-        # ── early exit for empty batch ────────────────────────────
-        if not calls:
-            self._log_request("batch_call_xtdata", f"fn={name}, calls=0")
-            return {"status": STATUS_OK, "results": []}
 
         try:
             arg_str = f"fn={name}, calls={len(calls)}"
@@ -435,21 +325,11 @@ class XtquantService(rpyc.Service):
                     f"'{name}' is a download function; use call_xtdata"
                 ),
             }
-        if xtdata is None:
-            return {
-                "status": STATUS_ERROR,
-                "error_type": "ImportError",
-                "error_message": "xtquant not available",
-            }
-
-        fn = getattr(xtdata, name, None)
-        if fn is None:
-            return {
-                "status": STATUS_ERROR,
-                "error_type": "AttributeError",
-                "error_message": f"xtdata has no attribute {name!r}",
-            }
-
+        # Reject downloads even when the batch is empty. All other contracted
+        # xtdata methods accept an empty batch as a no-op.
+        if not calls:
+            self._log_request("batch_call_xtdata", f"fn={name}, calls=0")
+            return {"status": STATUS_OK, "results": []}
         # ── structural validation ──────────────────────────────────
         for i, call in enumerate(calls):
             if not (isinstance(call, (list, tuple)) and len(call) == 2):
@@ -496,7 +376,7 @@ class XtquantService(rpyc.Service):
         _t_setup = time.time()
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             futures = {
-                ex.submit(_execute_one, name, args, kwargs): i
+                ex.submit(_execute_one, name, args, kwargs, self._contract()): i
                 for i, (args, kwargs) in enumerate(materialized_calls)
             }
             _t_submit = time.time()

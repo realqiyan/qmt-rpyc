@@ -1,5 +1,7 @@
 # qmt-rpyc
 
+This worktree is **0.4.0.dev2 (unreleased)** and introduces the fixed V1 contract. Server, client and consumers need one coordinated upgrade. PyPI commands below refer to released packages; see the [implementation and local-wheel validation guide](docs/design/contract-v1-implementation.md) for this development build.
+
 [中文](README.md)
 
 qmt-rpyc exposes the broker-customized `xtquant` SDK running beside

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0.dev2] - Unreleased
+
+- Print the server package version in the startup log and console summary.
+- Normalize invalid tick display timestamps from the validated Unix-millisecond `time` field in the baseline server adapter, retaining UTC+8, prices and valid existing display values. Invalid source timestamps still fail validation; the V1 snapshot and hash are unchanged.
+- Fix a-options to filter actual option expiry dates before fetching quotes. Add HTTP regressions for homepage and position profit/loss using recorded V1 tick shapes.
+- Reject overflowing numeric values with structured contract errors instead of leaking a Python exception. Keep live SDK downloads behind an explicit test opt-in.
+
+## [0.4.0.dev1] - Unreleased
+
+- Introduce an immutable V1 business contract (22 APIs, 16 constants), fixed input/output models and contract negotiation independent of package/SDK versions.
+- Add per-endpoint adapter strategies and registry selection so different MiniQMT SDK builds can implement the same V1 contract. Signature drift warns without blocking startup and rejects only affected calls.
+- Route calls, batches and downloads through validation; preserve time formats, project known fields, and distinguish pre-execution rejection from unknown trading outcomes.
+- Include both synchronous cancellation APIs. Remove uncontracted SDK/legacy event exports; self-test performs read-only queries.
+- Coordinate a-trader/a-options migration. Initial Windows read-only validation passed, but subsequent full-chain usage exposed a tick display-time compatibility gap addressed in dev2. This development version has not been published.
+
 ## [0.3.1] - 2026-09-12
 
 Stable release of the changes described under 0.3.1rc1 and 0.3.1rc2.

@@ -21,6 +21,7 @@ def mock_server():
     from qmt_rpyc.server.connection import ConnectionManager
     from qmt_rpyc.server.download_manager import DownloadTaskManager
     from qmt_rpyc.server.api_surface import build_api_surface
+    from qmt_rpyc.server.adapters import create_dispatcher
     from rpyc.utils.server import ThreadedServer
 
     cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
@@ -31,7 +32,8 @@ def mock_server():
     XtquantService._require_auth = False
     XtquantService._connection_mgr = cm
     XtquantService._download_mgr = dm
-    XtquantService._api_surface = build_api_surface()
+    XtquantService._dispatcher = create_dispatcher(cm)
+    XtquantService._api_surface = XtquantService._dispatcher.surface()
 
     srv = ThreadedServer(XtquantService, port=18899,
                          protocol_config={"allow_public_attrs": True,
@@ -72,7 +74,7 @@ class TestQmtClientCall:
     def test_call_xtdata(self, mock_server):
         from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
-            result = client.xtdata.get_market_data([], ["600000.SH"], "1d")
+            result = client.xtdata.get_market_data_ex([], ["600000.SH"], "1d")
             assert isinstance(result, dict)
             assert "600000.SH" in result
 
@@ -82,17 +84,12 @@ class TestQmtClientCall:
             order_id = client.trader.order_stock("ACC1", "600000.SH", 23, 100, 5, 10.0)
             assert isinstance(order_id, int)
 
-    def test_call_dynamically_adapted_trader_method(self, mock_server):
+    def test_uncontracted_sdk_method_is_hidden(self, mock_server):
         from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
-            assert "query_new_purchase_limit" in (
-                client._surface["XtQuantTrader"]["methods"])
-            result = client.trader.query_new_purchase_limit("ACC1")
-            assert result["account_id"] == "ACC1"
-            assert result["limit"] == 10000
-            keyword_result = client.trader.query_new_purchase_limit(
-                account="ACC2")
-            assert keyword_result["account_id"] == "ACC2"
+            assert "query_new_purchase_limit" not in client._surface["XtQuantTrader"]["methods"]
+            with pytest.raises(AttributeError):
+                client.trader.query_new_purchase_limit("ACC1")
 
     def test_xtconstant_inline(self, mock_server):
         from qmt_rpyc import QmtClient
@@ -119,13 +116,11 @@ class TestQmtClientDownload:
 
 
 class TestQmtClientEvents:
-    def test_subscribe_and_drain(self, mock_server):
+    def test_events_are_not_exported_in_v1(self, mock_server):
         from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18899) as client:
-            sub_id = client.subscribe(["order"])
-            events, dropped = client.drain_events(sub_id)
-            assert isinstance(events, list)
-            client.unsubscribe(sub_id)
+            assert not hasattr(client, 'subscribe')
+            assert not hasattr(client.trader, 'register_callback')
 
 
 class TestQmtClientBatch:
@@ -155,7 +150,7 @@ class TestQmtClientBatch:
         from qmt_rpyc import QmtClient
         from qmt_rpyc.exceptions import QmtError
         with QmtClient.connect("127.0.0.1", port=18899) as client:
-            with pytest.raises(QmtError):
+            with pytest.raises(AttributeError):
                 client.xtdata.nonexistent_func.batch([([], {})])
 
     def test_batch_download_rejected(self, mock_server):
@@ -190,6 +185,7 @@ def test_pre_protocol_authentication_preserves_obtain():
     from qmt_rpyc import QmtClient
     from qmt_rpyc.protocol import make_server_authenticator
     from qmt_rpyc.server.api_surface import build_api_surface
+    from qmt_rpyc.server.adapters import create_dispatcher
     from qmt_rpyc.server.auth_limiter import AuthRateLimiter
     from qmt_rpyc.server.connection import ConnectionManager
     from qmt_rpyc.server.download_manager import DownloadTaskManager
@@ -204,7 +200,8 @@ def test_pre_protocol_authentication_preserves_obtain():
     XtquantService._require_auth = True
     XtquantService._connection_mgr = manager
     XtquantService._download_mgr = downloads
-    XtquantService._api_surface = build_api_surface()
+    XtquantService._dispatcher = create_dispatcher(manager)
+    XtquantService._api_surface = XtquantService._dispatcher.surface()
     server = ThreadedServer(
         XtquantService,
         hostname="127.0.0.1",

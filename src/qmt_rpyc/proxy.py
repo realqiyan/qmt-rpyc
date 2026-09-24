@@ -5,6 +5,7 @@ import types
 import rpyc
 
 from qmt_rpyc.exceptions import _map_error
+from qmt_rpyc.contract import signature
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ class _RemoteCallable:
         self._meta = meta
         self.__doc__ = meta.get("doc", "")
         self.__name__ = name
+        self.__signature__ = signature(surface + "." + name)
         # types.MethodType puts batch into self.__dict__ so __dir__ finds it
         self.batch = types.MethodType(_RemoteCallable._batch, self)
 
@@ -66,9 +68,7 @@ class _RemoteModule:
             setattr(self, cname, cval)
 
     def __getattr__(self, name):
-        if name.startswith("_"):
-            raise AttributeError(name)
-        return _RemoteCallable(self._client, self._surface, name, {})
+        raise AttributeError(name)
 
     def __dir__(self):
         return list(self.__dict__.keys())
@@ -82,9 +82,7 @@ class _RemoteTrader:
             setattr(self, mname, _RemoteCallable(client, "trader", mname, meta))
 
     def __getattr__(self, name):
-        if name.startswith("_"):
-            raise AttributeError(name)
-        return _RemoteCallable(self._client, self._surface, name, {})
+        raise AttributeError(name)
 
 
 class DownloadTaskHandle:

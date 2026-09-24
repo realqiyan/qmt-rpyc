@@ -45,7 +45,7 @@ def test_config_requires_complete_tls_pair():
 
 
 def test_server_serves_health_and_discovery_during_blocked_qmt_init(monkeypatch):
-    import qmt_rpyc.server.api_surface as api_surface
+    import qmt_rpyc.server.adapters as adapters
     from qmt_rpyc.server.connection import ConnectionManager
     from qmt_rpyc.server.service import XtquantService
     import rpyc.utils.server
@@ -71,7 +71,7 @@ def test_server_serves_health_and_discovery_during_blocked_qmt_init(monkeypatch)
                 health = service.exposed_health()
                 assert health["connected"] is False
                 assert health["connection_state"] == "connecting"
-                assert service.exposed_get_api_surface() == surface
+                assert service.exposed_get_api_surface()["xtdata"] == surface["xtdata"]
                 calls.append("rpc available")
             finally:
                 release.set()
@@ -80,7 +80,8 @@ def test_server_serves_health_and_discovery_during_blocked_qmt_init(monkeypatch)
             release.set()
 
     monkeypatch.setattr(ConnectionManager, "_init_trader", blocked_init)
-    monkeypatch.setattr(api_surface, "build_api_surface", lambda: surface)
+    from types import SimpleNamespace
+    monkeypatch.setattr(adapters, "create_dispatcher", lambda cm: SimpleNamespace(surface=lambda: {**surface, "capabilities": {}}))
     monkeypatch.setattr(rpyc.utils.server, "ThreadedServer", FakeServer)
     try:
         assert start_server(_config(auth_key=None, allow_insecure=True)) == 0
@@ -90,17 +91,17 @@ def test_server_serves_health_and_discovery_during_blocked_qmt_init(monkeypatch)
 
 
 def test_missing_sdk_fails_before_listener_or_background_attempt(monkeypatch):
-    import qmt_rpyc.server.api_surface as api_surface
+    import qmt_rpyc.server.adapters as adapters
     from qmt_rpyc.server.connection import ConnectionManager
     import rpyc.utils.server
 
-    def missing_sdk():
+    def missing_sdk(connection):
         raise ImportError("missing SDK")
 
     def unexpected(*args, **kwargs):
         pytest.fail("listener/connection must not start with a broken SDK")
 
-    monkeypatch.setattr(api_surface, "build_api_surface", missing_sdk)
+    monkeypatch.setattr(adapters, "create_dispatcher", missing_sdk)
     monkeypatch.setattr(ConnectionManager, "start", unexpected)
     monkeypatch.setattr(rpyc.utils.server, "ThreadedServer", unexpected)
     with pytest.raises(ImportError, match="missing SDK"):
@@ -109,7 +110,7 @@ def test_missing_sdk_fails_before_listener_or_background_attempt(monkeypatch):
 
 def test_tls_uses_server_context_and_cleanup_order(monkeypatch):
     import socket
-    import qmt_rpyc.server.api_surface as api_surface
+    import qmt_rpyc.server.adapters as adapters
     import qmt_rpyc.server.connection as connection
     import qmt_rpyc.server.download_manager as download_manager
     import rpyc.utils.server
@@ -177,7 +178,8 @@ def test_tls_uses_server_context_and_cleanup_order(monkeypatch):
         connection, "ConnectionManager", FakeConnectionManager)
     monkeypatch.setattr(
         download_manager, "DownloadTaskManager", FakeDownloadManager)
-    monkeypatch.setattr(api_surface, "build_api_surface", lambda: {})
+    from types import SimpleNamespace
+    monkeypatch.setattr(adapters, "create_dispatcher", lambda cm: SimpleNamespace(surface=lambda: {}))
     monkeypatch.setattr(rpyc.utils.server, "ThreadedServer", FakeServer)
     monkeypatch.setattr(socket, "socket", lambda *args: FakeSocket())
     monkeypatch.setattr(ssl, "SSLContext", FakeContext)

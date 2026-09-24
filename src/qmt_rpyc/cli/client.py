@@ -5,7 +5,6 @@ import getpass
 import json
 import os
 import sys
-import time
 
 from qmt_rpyc import QmtClient
 from qmt_rpyc.cli.common import (
@@ -214,6 +213,8 @@ def _cmd_check(args):
             "package_version": client._surface.get("package_version"),
             "protocol_version": client._surface.get("protocol_version"),
             "schema_version": client._surface.get("schema_version"),
+            "contract_version": client._surface.get("contract_version"),
+            "capabilities": client._surface.get("capabilities", {}),
             "health": health,
             "api_counts": {
                 "xtdata": len(_surface_descriptor(client, "xtdata")),
@@ -313,31 +314,6 @@ def _cmd_call(args):
         return _execute_call(
             client, surface, name, call_args, kwargs, args
         )
-
-
-def _cmd_events(args):
-    event_types = [
-        item.strip() for item in args.types.split(",") if item.strip()
-    ]
-    with _connect(args) as client:
-        sub_id = client.subscribe(event_types, account_id=args.account)
-        try:
-            while True:
-                events, dropped = client.drain_events(
-                    sub_id, max_count=args.max_count
-                )
-                if dropped:
-                    _emit(
-                        {"warning": "events_dropped", "count": dropped},
-                        True,
-                        sys.stderr,
-                    )
-                for event in events:
-                    _emit(event, True)
-                time.sleep(args.interval)
-        finally:
-            with contextlib.suppress(Exception):
-                client.unsubscribe(sub_id)
 
 
 def _cmd_download(args):
@@ -597,38 +573,6 @@ Request files contain: {"surface":"xtdata","name":"get_full_tick",
         help="confirm an xtdata operation classified as a write",
     )
     call.set_defaults(func=_cmd_call)
-
-    events = sub.add_parser(
-        "events",
-        help="stream subscribed server events until Ctrl-C",
-        description=(
-            "Subscribe to comma-separated event types and emit each event as "
-            "one compact JSON object. Press Ctrl-C to stop cleanly."
-        ),
-        epilog="""Example:
-  qmt-rpyc-client events --profile office \\
-    --types order,trade,disconnect""",
-    )
-    _add_connection_options(events)
-    events.add_argument(
-        "--types",
-        required=True,
-        help="comma-separated event types",
-    )
-    events.add_argument("--account", help="optional account ID filter")
-    events.add_argument(
-        "--interval",
-        type=float,
-        default=1.0,
-        help="poll interval in seconds (default: %(default)s)",
-    )
-    events.add_argument(
-        "--max-count",
-        type=int,
-        default=100,
-        help="maximum events fetched per poll (default: %(default)s)",
-    )
-    events.set_defaults(func=_cmd_events)
 
     download = sub.add_parser(
         "download",

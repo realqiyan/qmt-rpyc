@@ -55,13 +55,13 @@ Important helpers:
 
 ## Architecture and Data Flow
 
-`server/main.py` is the server entry point. It loads `.env`, enables native crash diagnostics, applies the Python timestamp compatibility patch, configures rotating logs, initializes shared connection and download managers, discovers the xtquant API surface, and starts an RPyC `ThreadedServer` with optional TLS.
+`server/main.py` is the server entry point. It loads `.env`, enables native crash diagnostics, applies the Python timestamp compatibility patch, configures rotating logs, initializes shared connection and download managers, probes contract adapters, and starts an RPyC `ThreadedServer` with optional TLS.
 
-`server/service.py` exposes authentication, API discovery, xtdata/trader dispatch, batch calls, event polling, download status, and health checks. Before invoking pybind11-backed xtquant functions, remote RPyC netrefs must be materialized into local Python objects. Responses are converted by `server/serializer.py`; numpy arrays, pandas DataFrames, and xtquant objects become JSON-safe structures, with recursion limited to 64 levels.
+`server/service.py` exposes authentication, contract negotiation, xtdata/trader dispatch, batch calls, download status, and health checks. Before invoking pybind11-backed xtquant functions, remote RPyC netrefs must be materialized into local Python objects. Responses are converted by `server/serializer.py`; numpy arrays, pandas DataFrames, and xtquant objects become JSON-safe structures, with recursion limited to 64 levels.
 
 `server/connection.py` owns trader initialization, heartbeat checks, callback forwarding, and exponential-backoff reconnection. At runtime it discovers Trader methods with an exact `account` parameter and converts positional or keyword account ID strings into `StockAccount`; `_ACCOUNT_METHODS` remains a compatibility fallback when SDK signatures are unavailable. The shared `EventBus` provides bounded per-subscription queues, while `DownloadTaskManager` runs `download_*` work asynchronously.
 
-The client receives the discovered API surface at connection time. `client/proxy.py` builds xtdata and trader proxies dynamically, inlines constants to avoid extra RPCs, maps remote errors to client exceptions, and represents downloads with `DownloadTaskHandle`.
+The client negotiates a fixed bridge contract and its hash at connection time. Proxies and constants come from the bundled snapshot; capabilities report SDK compatibility separately. Unknown proxy attributes are rejected. Downloads use `DownloadTaskHandle`; non-idempotent requests never retry after an unknown outcome. Public event delivery is outside V1.
 
 Batching is supported only for xtdata calls to the same function. The project intentionally retains the existing bounded concurrent batch implementation; do not introduce process-wide xtdata serialization as part of bug fixes unless this decision is explicitly revisited. The server rejects `download_*` batch calls, caps batches at 500 entries, and keeps per-call failures isolated in the result list.
 
@@ -71,11 +71,11 @@ Batching is supported only for xtdata calls to the same function. The project in
 - The client supports Python 3.9+.
 - Server compatibility pins include `numpy>=1.24,<2` and `pandas>=2,<3`.
 - The deployed xtquant SDK is a broker-customized offline build and may differ from public xtquant releases and documentation. Treat the API surface discovered from the actual Windows deployment as the source of truth for supported functions and signatures.
-- The server is intended to expose the complete API surface available from that deployed xtquant build.
+- Runtime API exposure is fixed by `src/qmt_rpyc/contracts/v1.json` (22 APIs, 16 constants). `server/adapters` selects server-only SDK strategies per endpoint; multiple SDK strategies may implement the same contract version. Keep full SDK discovery for diagnostics only. Never mutate a published contract snapshot or expose unselected SDK methods. See `docs/design/contract-v1-implementation.md`.
 - API discovery does not by itself guarantee transport compatibility. Trader methods that accept callbacks require separate live validation because the client does not run an explicit RPyC background-serving thread.
 - Production deployment is confined to a trusted internal LAN. It currently authenticates clients with the shared `QMT_RPYC_AUTH_KEY`; TLS and mTLS certificates are not deployed.
 - Each server instance is dedicated to one person's QMT deployment and securities account environment, with one Trader shared by all connected clients.
-- Possession of `QMT_RPYC_AUTH_KEY` grants full trust within that server instance: clients may call every exposed API, control the shared Trader, and access all account and event data available to the instance. Per-client authorization and multi-tenant isolation are out of scope.
+- Possession of `QMT_RPYC_AUTH_KEY` grants full trust within that server instance: clients may call every contracted API and access account data available through it. Per-client authorization and multi-tenant isolation are out of scope.
 - Copy `.env.example` to `.env`. Never commit authentication keys, account IDs, certificates, local QMT paths, or logs.
 - Client and server must use the same `QMT_RPYC_AUTH_KEY`. TLS and mTLS are configured through the `QMT_RPYC_TLS_*` variables.
 - Authentication uses HMAC-SHA256 with timestamp/nonce validation and per-IP failure throttling.

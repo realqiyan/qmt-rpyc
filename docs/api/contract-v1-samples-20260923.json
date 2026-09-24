@@ -1,0 +1,24 @@
+{
+  "evidence_schema_version": 1,
+  "collection_scope": "read_only_return_samples",
+  "note": "Observed samples only; not complete schemas or semantic validation.",
+  "generated_at_utc": "2026-09-23T18:24:20.908944+00:00",
+  "runtime": {
+    "python_version": "3.11.9",
+    "platform": "Windows",
+    "local_timezone_name": "中国标准时间",
+    "local_utc_offset_seconds": 28800,
+    "local_time": "2026-09-24T02:24:20.908944+08:00"
+  },
+  "limits": {
+    "sequence_items": 3,
+    "mapping_fields": 128,
+    "depth": 8,
+    "string_chars": 256,
+    "dataframe_rows": 3,
+    "dataframe_columns": "all"
+  },
+  "sdk_output": "stdout/stderr discarded; no SDK logs included",
+  "collection_status": "importing",
+  "calls": []
+}

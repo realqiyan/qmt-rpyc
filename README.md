@@ -1,5 +1,7 @@
 # qmt-rpyc
 
+当前工作树为 **0.4.0.dev2（未发布）**，引入固定 V1 契约，需要服务端、客户端和使用方统一升级。下列 PyPI 安装说明仍针对已发布版本；本次本地 wheel 联调、适配器扩展方式及边界见[实现说明](docs/design/contract-v1-implementation.md)。
+
 [English](README.en.md)
 
 qmt-rpyc 通过 RPyC 将 Windows QMT/MiniQMT 中的 broker-customized
@@ -104,9 +106,9 @@ SDK 无法导入、认证配置无效或端口占用等本机启动错误仍会�
 - 下载任务的断线终止规则未接入连接状态检测，`fail_pending` 尚未生效。
 - 10 分钟重试档位，以及运行中断线后的自动恢复，尚未在实际 QMT 上验证。
 
-## 动态 CLI
+## 客户端 CLI
 
-API 列表和帮助来自实际 Windows 部署：
+API 名称、签名和帮助来自固定 V1 契约；运行时可用性由服务端适配器报告：
 
 ```bash
 qmt-rpyc-client api --profile office list xtdata
@@ -134,10 +136,9 @@ qmt-rpyc-client call --profile office trader order_stock \
 未知写操作要求 `--confirm-write`。带 `callback` 参数的方法首版不支持
 CLI 调用。
 
-事件、下载和自检：
+下载和自检：
 
 ```bash
-qmt-rpyc-client events --profile office --types order,trade,disconnect
 qmt-rpyc-client download --profile office start download_history_data \
   --args '["600000.SH","1d","20240101","20241231"]'
 qmt-rpyc-client download --profile office status TASK_ID

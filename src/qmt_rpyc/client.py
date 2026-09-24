@@ -1,6 +1,5 @@
 import os
 import socket
-import threading
 import logging
 
 import rpyc
@@ -14,68 +13,12 @@ from qmt_rpyc.protocol import (
 )
 from qmt_rpyc.proxy import _RemoteModule, _RemoteTrader, DownloadTaskHandle
 from qmt_rpyc.exceptions import NotConnectedError, QmtAuthError, _map_error
+from qmt_rpyc.contract import (
+    CONTRACT_VERSION, CONTRACT_HASH, SUPPORTED_CONTRACTS, ContractFailure,
+    bind, manifest, method_spec,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class _EventPoller:
-    def __init__(self, conn, sub_id, on_event, interval):
-        self._conn = conn
-        self._sub_id = sub_id
-        self._on_event = on_event
-        self._interval = interval
-        self._stop = threading.Event()
-        self._thread = None
-
-    def start(self):
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True,
-            name=f"event-poll-{self._sub_id}")
-        self._thread.start()
-
-    def stop(self):
-        self.request_stop()
-        if self._thread:
-            self._thread.join(timeout=2)
-
-    def request_stop(self):
-        self._stop.set()
-
-    def _loop(self):
-        delay = self._interval
-        failures = 0
-        while not self._stop.wait(delay):
-            try:
-                events, dropped = rpyc.classic.obtain(
-                    self._conn.root.poll_events(self._sub_id, 100))
-                failures = 0
-                delay = self._interval
-                if dropped > 0:
-                    logger.warning("Event subscription %s dropped %d events",
-                                   self._sub_id, dropped)
-                if self._on_event:
-                    for event in events:
-                        try:
-                            self._on_event(event)
-                        except Exception:
-                            logger.exception(
-                                "Event callback failed for subscription %s",
-                                self._sub_id,
-                            )
-            except Exception:
-                if self._stop.is_set():
-                    return
-                failures += 1
-                delay = min(
-                    max(self._interval, 0.1) * (2 ** min(failures, 8)),
-                    30.0,
-                )
-                logger.warning(
-                    "Event poll failed for subscription %s; retrying in %.1fs",
-                    self._sub_id,
-                    delay,
-                    exc_info=True,
-                )
 
 
 class QmtClient:
@@ -85,7 +28,6 @@ class QmtClient:
         self._xtdata = None
         self._trader = None
         self._xtconstant = None
-        self._pollers = {}
         self._closed = False
 
     @classmethod
@@ -156,7 +98,14 @@ class QmtClient:
         )
 
     def _init_surface(self):
-        self._surface = rpyc.classic.obtain(self._conn.root.get_api_surface())
+        try:
+            self._surface = rpyc.classic.obtain(
+                self._conn.root.get_api_surface(list(SUPPORTED_CONTRACTS)))
+        except (AttributeError, TypeError) as e:
+            raise _map_error(ContractFailure(
+                "ContractVersion", "", "server lacks contract negotiation; upgrade the server").response()) from e
+        if self._surface.get("status") == "error":
+            raise _map_error(self._surface)
         protocol_version = self._surface.get("protocol_version")
         if protocol_version != PROTOCOL_VERSION:
             raise QmtAuthError(
@@ -173,9 +122,23 @@ class QmtClient:
                     API_SURFACE_SCHEMA_VERSION, schema_version
                 ),
             )
-        self._xtdata = _RemoteModule(self, "xtdata", self._surface.get("xtdata", {}))
-        self._trader = _RemoteTrader(self, self._surface.get("XtQuantTrader", {}))
-        self._xtconstant = _RemoteModule(self, "xtconstant", self._surface.get("xtconstant", {}))
+        if (self._surface.get("contract_version") != CONTRACT_VERSION
+                or self._surface.get("contract_hash") != CONTRACT_HASH):
+            raise _map_error(ContractFailure(
+                "ContractVersion", "", "server does not implement this client's V1 contract").response())
+        fixed = manifest()
+        self._xtdata = _RemoteModule(self, "xtdata", fixed["xtdata"])
+        self._trader = _RemoteTrader(self, fixed["XtQuantTrader"])
+        self._xtconstant = _RemoteModule(self, "xtconstant", fixed["xtconstant"])
+
+    @property
+    def contract_version(self):
+        return CONTRACT_VERSION
+
+    def capabilities(self):
+        """A local snapshot of startup compatibility; health() includes live status."""
+        import copy
+        return copy.deepcopy((self._surface or {}).get("capabilities", {}))
 
     @property
     def xtdata(self):
@@ -191,19 +154,30 @@ class QmtClient:
 
     def _call(self, surface, name, args, kwargs):
         conn = self._ensure_connected()
-        if surface == "xtdata":
-            resp = conn.root.call_xtdata(name, list(args), dict(kwargs))
-        elif surface == "trader":
-            resp = conn.root.call_trader(name, list(args), dict(kwargs))
-        else:
-            raise ValueError(f"unknown surface: {surface}")
+        api = surface + "." + name
+        try:
+            bind(api, args, kwargs)
+        except ContractFailure as e:
+            raise _map_error(e.response()) from e
+        try:
+            if surface == "xtdata":
+                resp = conn.root.call_xtdata(name, list(args), dict(kwargs))
+            elif surface == "trader":
+                resp = conn.root.call_trader(name, list(args), dict(kwargs))
+            else:
+                raise ValueError(f"unknown surface: {surface}")
+            resp = rpyc.classic.obtain(resp)
+        except Exception as e:
+            if method_spec(api)["mutation"]:
+                raise _map_error(ContractFailure(
+                    "TransportError", api, "request outcome unknown; reconcile before retrying",
+                    "transport", "unknown").response()) from e
+            raise
 
         # Materialize netref proxy → local Python objects.
         # Without this, every dict/list access in user code triggers a hidden
         # RPC back to the server, making remote use unusably slow and breaking
         # json.dumps / pickle / isinstance checks.
-        resp = rpyc.classic.obtain(resp)
-
         status = resp.get("status")
         if status == "ok":
             data = resp["data"]
@@ -257,28 +231,6 @@ class QmtClient:
     def download_handle(self, task_id):
         return DownloadTaskHandle(self, task_id)
 
-    def subscribe(self, event_types, account_id=None, on_event=None, poll_interval=1.0):
-        if poll_interval <= 0:
-            raise ValueError("poll_interval must be greater than 0")
-        conn = self._ensure_connected()
-        sub_id = conn.root.subscribe_event(list(event_types), account_id)
-        poller = _EventPoller(conn, sub_id, on_event, poll_interval)
-        if on_event is not None:
-            poller.start()
-        self._pollers[sub_id] = poller
-        return sub_id
-
-    def unsubscribe(self, sub_id):
-        poller = self._pollers.pop(sub_id, None)
-        if poller:
-            poller.stop()
-        conn = self._ensure_connected()
-        conn.root.unsubscribe_event(sub_id)
-
-    def drain_events(self, sub_id, max_count=100):
-        conn = self._ensure_connected()
-        return rpyc.classic.obtain(conn.root.poll_events(sub_id, max_count))
-
     def __enter__(self):
         return self
 
@@ -289,10 +241,6 @@ class QmtClient:
         if self._closed:
             return
         self._closed = True
-        pollers = list(self._pollers.values())
-        for poller in pollers:
-            poller.request_stop()
-        self._pollers.clear()
         conn = self._conn
         self._conn = None
         if conn:
@@ -300,8 +248,6 @@ class QmtClient:
                 conn.close()
             except Exception:
                 logger.warning("Failed to close RPyC connection", exc_info=True)
-        for poller in pollers:
-            poller.stop()
 
     def _ensure_connected(self):
         if self._closed or self._conn is None:

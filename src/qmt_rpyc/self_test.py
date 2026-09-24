@@ -422,21 +422,28 @@ def run_self_test(client, test_symbols=None, timeout=30.0):
             print("  [%s]" % category)
             last_category = category
 
-        # ── check skip condition ───────────────────────────────────
-        skip_if = case.get("skip_if")
-        if skip_if:
-            should_skip, reason = skip_if(client, symbols)
+        # Probe only selected read-only V1 capabilities. Download submission
+        # changes the SDK cache and is deliberately outside self-test.
+        reason = None
+        api = ('trader.' if category == 'trader' else 'xtdata.') + name.split(' ')[0]
+        if category == 'download':
+            reason = 'downloads are excluded from read-only self-test'
+        elif category != 'smoke':
+            capability = client.capabilities().get(api)
+            if capability is None:
+                reason = 'not part of contract V1'
+            elif not capability['available']:
+                reason = capability.get('reason') or 'API unavailable'
+        skip_if = case.get('skip_if')
+        if not reason and skip_if:
+            should_skip, detail = skip_if(client, symbols)
             if should_skip:
-                print("  ○ %-42s — %s" % (name, reason))
-                results.append({
-                    "name": name,
-                    "category": category,
-                    "status": "skip",
-                    "duration_ms": 0,
-                    "detail": reason,
-                })
-                skipped += 1
-                continue
+                reason = detail
+        if reason:
+            print("  ○ %-42s — %s" % (name, reason))
+            results.append(dict(name=name, category=category, status='skip', duration_ms=0, detail=reason))
+            skipped += 1
+            continue
 
         # ── run the test ───────────────────────────────────────────
         t1 = time.time()
@@ -461,7 +468,9 @@ def run_self_test(client, test_symbols=None, timeout=30.0):
             msg = str(e)
             # AttributeError from server (wrapped as RemoteCallError)
             # → skip for version-missing functions
-            if ("has no attribute" in msg
+            if (isinstance(e, AttributeError)
+                    or getattr(e, "error_type", None) in ("UnknownAPI", "APIUnavailable")
+                    or "has no attribute" in msg
                     or "object has no attribute" in msg):
                 status = "skip"
                 detail = "not in API surface"

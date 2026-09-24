@@ -21,6 +21,7 @@ def server():
     from qmt_rpyc.server.connection import ConnectionManager
     from qmt_rpyc.server.download_manager import DownloadTaskManager
     from qmt_rpyc.server.api_surface import build_api_surface
+    from qmt_rpyc.server.adapters import create_dispatcher
     from rpyc.utils.server import ThreadedServer
 
     cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
@@ -31,7 +32,8 @@ def server():
     XtquantService._require_auth = False
     XtquantService._connection_mgr = cm
     XtquantService._download_mgr = dm
-    XtquantService._api_surface = build_api_surface()
+    XtquantService._dispatcher = create_dispatcher(cm)
+    XtquantService._api_surface = XtquantService._dispatcher.surface()
 
     srv = ThreadedServer(XtquantService, port=18900,
                          protocol_config={"allow_public_attrs": True,
@@ -53,7 +55,7 @@ class TestEndToEnd:
     def test_connect_and_call_xtdata(self, server):
         from qmt_rpyc import QmtClient
         with QmtClient.connect("127.0.0.1", port=18900) as client:
-            result = client.xtdata.get_market_data([], ["600000.SH"], "1d")
+            result = client.xtdata.get_market_data_ex([], ["600000.SH"], "1d")
             assert "600000.SH" in result
 
     def test_connect_and_call_trader(self, server):
@@ -88,14 +90,8 @@ class TestEndToEnd:
         from qmt_rpyc import QmtClient
         from qmt_rpyc.exceptions import RemoteCallError
         with QmtClient.connect("127.0.0.1", port=18900) as client:
-            with pytest.raises(RemoteCallError):
+            with pytest.raises(AttributeError):
                 client.trader.nonexistent_method("ACC1")
-
-    def test_event_subscribe_unsubscribe(self, server):
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18900) as client:
-            sub_id = client.subscribe(["order", "disconnect"])
-            client.unsubscribe(sub_id)
 
     def test_multiple_clients(self, server):
         from qmt_rpyc import QmtClient

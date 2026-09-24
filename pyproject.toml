@@ -59,4 +59,4 @@ where = ["src"]
 version = {attr = "qmt_rpyc.version.__version__"}
 
 [tool.setuptools.package-data]
-qmt_rpyc = ["py.typed"]
+qmt_rpyc = ["py.typed", "contracts/*.json"]

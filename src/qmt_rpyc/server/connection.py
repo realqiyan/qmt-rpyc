@@ -660,13 +660,15 @@ class ConnectionManager:
         return args, kwargs
 
     def call_trader_method(self, name, args, kwargs):
+        entered_sdk = False
         with self._trader_lock:
             trader = self._trader
             native_lock = self._native_lock
             if (trader is None or native_lock is None
                     or not self._connected):
                 return {"status": STATUS_ERROR, "error_type": "NotConnected",
-                        "error_message": "trader not connected"}
+                        "error_message": "trader not connected",
+                        "phase": "pre_execution", "outcome": "not_executed"}
         try:
             with native_lock:
                 with self._trader_lock:
@@ -674,23 +676,28 @@ class ConnectionManager:
                             or self._stop_event.is_set()):
                         return {"status": STATUS_ERROR,
                                 "error_type": "NotConnected",
-                                "error_message": "trader not connected"}
+                                "error_message": "trader not connected",
+                                "phase": "pre_execution", "outcome": "not_executed"}
                 method = getattr(trader, name, None)
                 if method is None:
                     return {
                         "status": STATUS_ERROR,
                         "error_type": "AttributeError",
                         "error_message": f"trader has no method {name!r}",
+                        "phase": "pre_execution", "outcome": "not_executed",
                     }
                 args, kwargs = self._wrap_account_if_needed(
                     name, args, kwargs)
+                entered_sdk = True
                 result = method(*args, **kwargs)
             return {"status": STATUS_OK, "data": serialize(result)}
         except Exception as e:
             logger.warning("call_trader(%s) raised %s: %s",
                            name, type(e).__name__, e)
             return {"status": STATUS_ERROR, "error_type": type(e).__name__,
-                    "error_message": str(e)}
+                    "error_message": str(e),
+                    "phase": "sdk_execution" if entered_sdk else "pre_execution",
+                    "outcome": "unknown" if entered_sdk else "not_executed"}
 
     # ── health ─────────────────────────────────────────────────────
 

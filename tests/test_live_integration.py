@@ -88,7 +88,7 @@ def live_server():
     from qmt_rpyc.server.service import XtquantService
     from qmt_rpyc.server.connection import ConnectionManager
     from qmt_rpyc.server.download_manager import DownloadTaskManager
-    from qmt_rpyc.server.api_surface import build_api_surface
+    from qmt_rpyc.server.adapters import create_dispatcher
     from qmt_rpyc.protocol import make_server_authenticator
     from qmt_rpyc.server.auth_limiter import AuthRateLimiter
     from rpyc.utils.server import ThreadedServer
@@ -110,7 +110,8 @@ def live_server():
     XtquantService._require_auth = bool(cfg["auth_key"])
     XtquantService._connection_mgr = cm
     XtquantService._download_mgr = dm
-    XtquantService._api_surface = build_api_surface()
+    XtquantService._dispatcher = create_dispatcher(cm)
+    XtquantService._api_surface = XtquantService._dispatcher.surface()
 
     server_options = {
         "service": XtquantService,
@@ -155,8 +156,8 @@ def client(live_server):
 #
 # "_skip_reason": if present the test is skipped with that reason (e.g. known
 #   xtquant crash).
-# "_is_download": if True the function is tested via the download workflow
-#   (call_xtdata → poll task) rather than as a direct query.
+# This live registry includes historical SDK probes. Unselected names are
+# skipped according to the fixed bridge contract.
 
 _QUERY_FUNCTIONS = [
     # ── instrument detail ──────────────────────────────────────────
@@ -409,6 +410,8 @@ _DOWNLOAD_FUNCTIONS = [
     },
 ]
 
+_LIVE_DOWNLOADS_ENABLED = os.environ.get("QMT_RPYC_ENABLE_LIVE_DOWNLOADS") == "1"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # tests
@@ -487,27 +490,10 @@ class TestConnectAndHealth:
                 if r["status"] == "fail"]))
 
 
-class TestEventBus:
-    """Event subscribe / unsubscribe / drain round-trip."""
-
-    def test_subscribe_and_drain(self, client):
-        """Subscribe, drain (should be empty with no trader activity), unsubscribe."""
-        sub_id = client.subscribe(["order", "disconnect"])
-        assert isinstance(sub_id, str) and len(sub_id) > 0
-
-        events, dropped = client.drain_events(sub_id, max_count=10)
-        assert isinstance(events, list)
-        assert isinstance(dropped, int)
-
-        client.unsubscribe(sub_id)
-
-    def test_double_subscribe_two_subs(self, client):
-        """Two subscriptions should get different IDs."""
-        s1 = client.subscribe(["order"])
-        s2 = client.subscribe(["order"])
-        assert s1 != s2, "subscription IDs should be unique"
-        client.unsubscribe(s1)
-        client.unsubscribe(s2)
+class TestEventScope:
+    def test_v1_does_not_export_events(self, client):
+        assert not hasattr(client, 'subscribe')
+        assert not hasattr(client.trader, 'register_callback')
 
 
 # ── per-query-function test parametrization ───────────────────────────────
@@ -550,9 +536,7 @@ class TestQueryFunctions:
         if skip_reason:
             pytest.skip(f"SKIP: {skip_reason}")
 
-        # Check the API surface dict — getattr on the proxy always returns
-        # a _RemoteCallable (via __getattr__ fallback), so we can't use it
-        # to detect version-missing functions.
+        # The local proxy exposes only contracted functions.
         funcs = client._surface.get("xtdata", {}).get("functions", {})
         if name not in funcs:
             pytest.skip(f"{name} not in API surface — may be version-specific")
@@ -674,8 +658,10 @@ class TestDownloadWorkflow:
 
         from qmt_rpyc.proxy import DownloadTaskHandle
 
-        # Check the API surface dict — the proxy's __getattr__ always returns
-        # a _RemoteCallable, even for non-existent functions.
+        if not _LIVE_DOWNLOADS_ENABLED:
+            pytest.skip("live downloads require QMT_RPYC_ENABLE_LIVE_DOWNLOADS=1")
+
+        # Downloads can change the broker cache, so they require opt-in.
         funcs = client._surface.get("xtdata", {}).get("functions", {})
         if name not in funcs:
             pytest.skip(f"{name} not in API surface — may be version-specific")
@@ -702,29 +688,27 @@ class TestErrorHandling:
     """Graceful error handling for bad arguments / missing functions."""
 
     def test_nonexistent_function(self, client):
-        """Calling a non-existent xtdata function raises an error via RPyC."""
-        from qmt_rpyc.exceptions import RemoteCallError
-
-        with pytest.raises(RemoteCallError):
+        """Uncontracted functions never become client proxy methods."""
+        with pytest.raises(AttributeError):
             client.xtdata.nonexistent_func_xyz()
 
     def test_bad_stock_code_returns_gracefully(self, client):
         """Invalid stock code should either return empty data or raise gracefully."""
+        from qmt_rpyc.exceptions import QmtError
+
         try:
             result = client.xtdata.get_instrument_detail("NOT_A_REAL_CODE")
             # If it returns, should be dict-like
             assert isinstance(result, (dict, type(None))), (
                 f"unexpected type: {type(result)}"
             )
-        except Exception:
+        except QmtError:
             # RPyC remote exceptions are also acceptable
             pass
 
     def test_batch_nonexistent_function(self, client):
-        """Batch calling a non-existent function raises error."""
-        from qmt_rpyc.exceptions import QmtError
-
-        with pytest.raises(QmtError):
+        """Uncontracted batch methods are unavailable on the proxy."""
+        with pytest.raises(AttributeError):
             client.xtdata.nonexistent_func_xyz.batch([([], {})])
 
 

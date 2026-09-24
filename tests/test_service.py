@@ -57,7 +57,7 @@ def test_cold_rpc_start_and_recovery_without_existing_server(mock_xtquant, monke
                 "127.0.0.1", listeners[0].port,
                 auth_key=_config()["auth_key"], timeout=2) as client:
             assert client.health()["connected"] is False
-            assert "get_market_data" in client._surface["xtdata"]["functions"]
+            assert "get_market_data_ex" in client._surface["xtdata"]["functions"]
             maintenance.clear()
             deadline = time.monotonic() + 3
             while not client.health()["connected"] and time.monotonic() < deadline:
@@ -97,6 +97,7 @@ def service(mock_xtquant):
     from qmt_rpyc.server.connection import ConnectionManager
     from qmt_rpyc.server.download_manager import DownloadTaskManager
     from qmt_rpyc.server.api_surface import build_api_surface
+    from qmt_rpyc.server.adapters import create_dispatcher
 
     cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
     cm._init_trader()
@@ -107,7 +108,8 @@ def service(mock_xtquant):
     XtquantService._require_auth = False
     XtquantService._connection_mgr = cm
     XtquantService._download_mgr = dm
-    XtquantService._api_surface = build_api_surface()
+    XtquantService._dispatcher = create_dispatcher(cm)
+    XtquantService._api_surface = XtquantService._dispatcher.surface()
 
     svc = XtquantService()
     yield svc
@@ -127,17 +129,17 @@ class TestApiSurface:
 class TestCallXtdata:
     def test_call_success(self, service):
         result = service.exposed_call_xtdata(
-            "get_market_data", [], {"stock_list": ["600000.SH"], "period": "1d"})
+            "get_market_data_ex", [], {"stock_list": ["600000.SH"], "period": "1d"})
         assert result["status"] == "ok"
         assert "600000.SH" in result["data"]
 
     def test_call_nonexistent(self, service):
         result = service.exposed_call_xtdata("nonexistent_func", [], {})
         assert result["status"] == "error"
-        assert result["error_type"] == "AttributeError"
+        assert result["error_type"] == "UnknownAPI"
 
     def test_call_with_error(self, service):
-        result = service.exposed_call_xtdata("get_market_data", [], {})
+        result = service.exposed_call_xtdata("get_market_data_ex", [], {})
         assert result["status"] in ("ok", "error")
 
 
@@ -154,6 +156,7 @@ class TestCallTrader:
         from qmt_rpyc.server.connection import ConnectionManager
         from qmt_rpyc.server.download_manager import DownloadTaskManager
         from qmt_rpyc.server.api_surface import build_api_surface
+        from qmt_rpyc.server.adapters import create_dispatcher
 
         cm = ConnectionManager(path="", session_id=1, account_id="")
         dm = DownloadTaskManager(max_workers=1)
@@ -161,7 +164,8 @@ class TestCallTrader:
         XtquantService._require_auth = False
         XtquantService._connection_mgr = cm
         XtquantService._download_mgr = dm
-        XtquantService._api_surface = build_api_surface()
+        XtquantService._dispatcher = create_dispatcher(cm)
+        XtquantService._api_surface = XtquantService._dispatcher.surface()
         svc = XtquantService()
 
         result = svc.exposed_call_trader("order_stock", ["ACC1", "600000.SH", 23, 100, 5, 10.0], {})
@@ -196,30 +200,9 @@ class TestDownload:
 
 
 class TestEvents:
-    def test_subscribe_unsubscribe(self, service):
-        sub_id = service.exposed_subscribe_event(["order"])
-        assert isinstance(sub_id, str)
-        assert service.exposed_unsubscribe_event(sub_id) is True
-
-    def test_poll_empty(self, service):
-        sub_id = service.exposed_subscribe_event(["order"])
-        events, dropped = service.exposed_poll_events(sub_id)
-        assert events == []
-        assert dropped == 0
-        service.exposed_unsubscribe_event(sub_id)
-
-    def test_subscription_is_owned_by_service_instance(self, service):
-        from qmt_rpyc.server.service import XtquantService
-
-        sub_id = service.exposed_subscribe_event(["reconnect"])
-        other = XtquantService()
-        assert other.exposed_poll_events(sub_id) == ([], 0)
-        assert other.exposed_unsubscribe_event(sub_id) is False
-        assert service.exposed_unsubscribe_event(sub_id) is True
-
-    def test_invalid_event_type_is_rejected(self, service):
-        with pytest.raises(ValueError):
-            service.exposed_subscribe_event(["unknown"])
+    def test_events_are_not_exposed(self, service):
+        assert not hasattr(service, 'exposed_subscribe_event')
+        assert not hasattr(service, 'exposed_poll_events')
 
 
 class TestAuth:
@@ -228,13 +211,15 @@ class TestAuth:
         from qmt_rpyc.server.connection import ConnectionManager
         from qmt_rpyc.server.download_manager import DownloadTaskManager
         from qmt_rpyc.server.api_surface import build_api_surface
+        from qmt_rpyc.server.adapters import create_dispatcher
 
         cm = ConnectionManager(path="", session_id=1, account_id="")
         dm = DownloadTaskManager(max_workers=1)
         XtquantService._require_auth = True
         XtquantService._connection_mgr = cm
         XtquantService._download_mgr = dm
-        XtquantService._api_surface = build_api_surface()
+        XtquantService._dispatcher = create_dispatcher(cm)
+        XtquantService._api_surface = XtquantService._dispatcher.surface()
         svc = XtquantService()
 
         with pytest.raises(Exception):
@@ -274,21 +259,26 @@ class TestBatchCallXtdata:
         assert result["results"][2]["status"] == "ok"
         # Second call fails
         assert result["results"][1]["status"] == "error"
-        assert result["results"][1]["error_type"] == "ValueError"
-        assert "mock batch failure" in result["results"][1]["error_message"]
+        assert result["results"][1]["error_type"] == "SDKError"
+        assert "SDK call failed" in result["results"][1]["error_message"]
 
     def test_batch_nonexistent_function(self, service):
         """Calling a non-existent function returns top-level error."""
         result = service.exposed_batch_call_xtdata(
             "nonexistent_func", [([], {})])
         assert result["status"] == "error"
-        assert result["error_type"] == "AttributeError"
+        assert result["error_type"] == "UnknownAPI"
 
     def test_batch_download_rejected(self, service):
         """download_* functions are rejected at the batch level."""
         result = service.exposed_batch_call_xtdata(
             "download_history_data",
             [(["600000.SH"], {"period": "1d"})])
+        assert result["status"] == "error"
+        assert result["error_type"] == "BatchRejected"
+
+    def test_empty_batch_download_rejected(self, service):
+        result = service.exposed_batch_call_xtdata("download_history_data", [])
         assert result["status"] == "error"
         assert result["error_type"] == "BatchRejected"
 
