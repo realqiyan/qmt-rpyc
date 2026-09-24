@@ -25,7 +25,7 @@ start-rpyc.bat
 
 源码脚本创建 `.venv`，安装开发及服务端依赖，并明确使用仓库 `.env`。`start-rpyc.bat` 在源码目录只启动该源码环境。
 
-Windows 安装包：完整解压含 wheel 的 ZIP，运行 `install-server.bat`，完成初始化和检查后运行 `start-rpyc.bat`。安装器将包安装到 `%LOCALAPPDATA%\qmt-rpyc\venv`；它需要联网安装第三方依赖。后续维护可使用 `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`。
+Windows 安装或升级：运行 `install-server.bat`，完成初始化和检查后运行 `start-rpyc.bat`。同目录存在唯一 wheel 时优先安装该文件；没有 wheel 时从 PyPI 安装或升级到脚本固定的正式版本（当前 0.5.0）。升级前停止旧服务，已有配置保留。安装器将包安装到 `%LOCALAPPDATA%\qmt-rpyc\venv`；它需要联网安装第三方依赖。后续维护可使用 `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`。
 
 安装包服务端默认配置位于 `%LOCALAPPDATA%\qmt-rpyc\config.env`。配置向导可探测 MiniQMT、SDK、账户和本地网络；默认生成认证密钥。客户端 profile 使用系统配置目录，密钥优先放入系统 keyring，也可通过 `QMT_RPYC_AUTH_KEY` 提供。客户端配置优先级为命令行、环境变量、profile、默认值。服务端使用 `--config` 指定的文件或默认配置文件，环境变量覆盖文件值。非交互初始化导入已有 `.env` 时需同时提供 `--non-interactive --yes`。
 

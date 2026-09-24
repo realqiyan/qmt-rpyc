@@ -5,8 +5,10 @@ chcp 65001 >nul 2>&1
 set "QMT_RPYC_ROOT=%LOCALAPPDATA%\qmt-rpyc"
 set "QMT_RPYC_VENV=%QMT_RPYC_ROOT%\venv"
 set "PYTHON_CMD="
+REM Keep the online installer pin aligned with the release version.
+set "QMT_RPYC_VERSION=0.5.0"
 
-REM Require exactly one bundled wheel; never fetch a different bridge version.
+REM Prefer the bundled acceptance/release wheel; otherwise use the pinned PyPI release.
 set "BUNDLED_WHEEL="
 for %%F in ("%~dp0qmt_rpyc-*-py3-none-any.whl") do (
     if exist "%%~fF" (
@@ -17,10 +19,13 @@ for %%F in ("%~dp0qmt_rpyc-*-py3-none-any.whl") do (
         set "BUNDLED_WHEEL=%%~fF"
     )
 )
-if not defined BUNDLED_WHEEL (
-    echo [ERROR] Bundled qmt-rpyc wheel not found. Extract the complete Windows ZIP.
-    exit /b 1
+if defined BUNDLED_WHEEL (
+    set "INSTALL_SOURCE=%BUNDLED_WHEEL%"
+) else (
+    set "INSTALL_SOURCE=PyPI qmt-rpyc==%QMT_RPYC_VERSION%"
 )
+echo Installing from: %INSTALL_SOURCE%
+echo Stop any running qmt-rpyc server before continuing.
 
 py -3.11 --version >nul 2>&1
 if not errorlevel 1 set "PYTHON_CMD=py -3.11"
@@ -49,18 +54,23 @@ if errorlevel 1 (
 
 "%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 exit /b 1
-REM Reinstall the exact local build even if this development version exists.
-"%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install --force-reinstall --no-deps "%BUNDLED_WHEEL%"
-if errorlevel 1 exit /b 1
-"%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install "%BUNDLED_WHEEL%[server]"
-if errorlevel 1 exit /b 1
+if defined BUNDLED_WHEEL (
+    REM Reinstall the exact local build even if this development version exists.
+    "%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install --force-reinstall --no-deps "%BUNDLED_WHEEL%"
+    if errorlevel 1 exit /b 1
+    "%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install "%BUNDLED_WHEEL%[server]"
+    if errorlevel 1 exit /b 1
+) else (
+    "%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install --upgrade --index-url https://pypi.org/simple "qmt-rpyc[server]==%QMT_RPYC_VERSION%"
+    if errorlevel 1 exit /b 1
+)
 
 > "%QMT_RPYC_ROOT%\qmt-rpyc-server.bat" echo @echo off
 >> "%QMT_RPYC_ROOT%\qmt-rpyc-server.bat" echo "%QMT_RPYC_VENV%\Scripts\qmt-rpyc-server.exe" %%*
 
 echo.
 "%QMT_RPYC_VENV%\Scripts\qmt-rpyc-server.exe" --version
-echo Installed from: %BUNDLED_WHEEL%
+echo Installed from: %INSTALL_SOURCE%
 echo Launcher: %QMT_RPYC_ROOT%\qmt-rpyc-server.bat
 echo.
 call "%QMT_RPYC_ROOT%\qmt-rpyc-server.bat" init

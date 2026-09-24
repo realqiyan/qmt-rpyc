@@ -111,7 +111,8 @@ Before creating a release:
 2. Review the complete diff and scan tracked files and the built wheel/sdist
    for authentication keys, account IDs, certificates, local QMT paths, logs,
    and other local environment data.
-3. Update `src/qmt_rpyc/version.py`, `CHANGELOG.md`, and version-specific
+3. Update `src/qmt_rpyc/version.py`, `CHANGELOG.md`, the online installer
+   release pin `QMT_RPYC_VERSION` in `install-server.bat`, and version-specific
    examples in `README.md` and `README.en.md`.
 4. Run `python -m pytest tests/ -v`. Live tests skip unless explicitly enabled,
    but the portable and mocked suites must pass.

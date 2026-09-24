@@ -22,7 +22,7 @@ start-rpyc.bat
 
 Source scripts create `.venv`, install server/development dependencies and explicitly use the checkout `.env`. In a source checkout, `start-rpyc.bat` always uses that environment.
 
-For a Windows ZIP bundle, extract all files, run `install-server.bat`, then `start-rpyc.bat`. The installer uses the bundled wheel, downloads third-party dependencies, and installs into `%LOCALAPPDATA%\qmt-rpyc\venv`. For maintenance, use `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`.
+For Windows installation or upgrades, stop the existing server, run `install-server.bat`, then `start-rpyc.bat`. The installer prefers a single wheel beside the script; without one, it installs or upgrades from PyPI to the pinned release (currently 0.5.0). Existing configuration is preserved. It downloads third-party dependencies and installs into `%LOCALAPPDATA%\qmt-rpyc\venv`. For maintenance, use `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`.
 
 The managed server configuration lives in `%LOCALAPPDATA%\qmt-rpyc\config.env`. Client profiles use the platform configuration directory; credentials use the system keyring or `QMT_RPYC_AUTH_KEY`.
 
