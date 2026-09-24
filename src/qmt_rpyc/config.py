@@ -14,7 +14,6 @@ except ImportError:  # pragma: no cover - Python 3.9-3.10
 
 import tomli_w
 
-
 KEYRING_SERVICE = "qmt-rpyc"
 DEFAULT_PROFILE = "default"
 

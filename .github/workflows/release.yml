@@ -40,7 +40,8 @@ jobs:
       - name: Build Windows bootstrap bundle
         run: |
           mkdir -p release/qmt-rpyc-windows
-          cp install-server.bat start-rpyc.bat README.md README.en.md LICENSE .env.example release/qmt-rpyc-windows/
+          cp install-server.bat start-rpyc.bat README.md README.en.md SECURITY.md LICENSE .env.example release/qmt-rpyc-windows/
+          cp -R docs release/qmt-rpyc-windows/
           cp dist/*.whl release/qmt-rpyc-windows/
           cd release
           zip -r "qmt-rpyc-${GITHUB_REF_NAME}-windows.zip" qmt-rpyc-windows

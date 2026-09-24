@@ -18,7 +18,7 @@ cd "$PROJECT_ROOT"
 echo "[1/3] Checking Python version..."
 
 PYTHON_EXE="${PYTHON_EXE:-python3}"
-if ! command -v "$PYTHON_EXE" &>/dev/null; then
+if [ "$PYTHON_EXE" = python3 ] && ! command -v "$PYTHON_EXE" &>/dev/null; then
     echo "       python3 not found, trying python..."
     PYTHON_EXE="python"
 fi
@@ -52,6 +52,7 @@ else
 fi
 
 VENV_PYTHON="$VENV_DIR/bin/python"
+"$VENV_PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else "Existing venv requires Python 3.9+; recreate it.")'
 
 # --- 3. install client dependencies -------------------------------------------
 echo ""
@@ -66,10 +67,9 @@ echo ""
 echo "============================================================"
 echo " Setup complete."
 echo ""
-echo " Usage from Python:"
-echo "   from qmt_rpyc import QmtClient"
-echo "   c = QmtClient.connect('SERVER_IP', port=18812,"
-echo "                          auth_key='your-secret-key-123456')"
+echo " Configure a profile with the server address and shared authentication key:"
+echo "   $VENV_DIR/bin/qmt-rpyc-client init --profile office"
+echo "   $VENV_DIR/bin/qmt-rpyc-client check --profile office"
 echo ""
 echo " Activate venv:  source $VENV_DIR/bin/activate"
 echo "============================================================"

@@ -1,236 +1,176 @@
-import sys
-import os
-import time
-import threading
+"""Client protocol/context/uncertainty tests using a local fake transport."""
+from qmt_rpyc.contracts.common import BatchResult, Failure, ItemError, OperationError, Success
+from qmt_rpyc.contracts.market import DailyBarSeries
+from qmt_rpyc.contracts.downloads import DownloadStatus, TaskRef
+from qmt_rpyc.contracts.system import Capabilities, Capability
+from qmt_rpyc.contracts.trading import RequestSucceeded
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
+
 import pytest
 
-
-@pytest.fixture(scope="module")
-def mock_server():
-    tests_dir = os.path.dirname(os.path.abspath(__file__))
-    if tests_dir not in sys.path:
-        sys.path.insert(0, tests_dir)
-    from tests import _xtquant_mock
-    sys.modules["xtquant"] = _xtquant_mock
-    sys.modules["xtquant.xtdata"] = _xtquant_mock.xtdata
-    sys.modules["xtquant.xttrader"] = _xtquant_mock
-    sys.modules["xtquant.xttype"] = _xtquant_mock
-    sys.modules["xtquant.xtconstant"] = _xtquant_mock.xtconstant
-
-    from qmt_rpyc.server.service import XtquantService
-    from qmt_rpyc.server.connection import ConnectionManager
-    from qmt_rpyc.server.download_manager import DownloadTaskManager
-    from qmt_rpyc.server.api_surface import build_api_surface
-    from qmt_rpyc.server.adapters import create_dispatcher
-    from rpyc.utils.server import ThreadedServer
-
-    cm = ConnectionManager(path="test", session_id=1, account_id="ACC1")
-    cm._init_trader()
-    cm.connect()
-    dm = DownloadTaskManager(max_workers=1)
-
-    XtquantService._require_auth = False
-    XtquantService._connection_mgr = cm
-    XtquantService._download_mgr = dm
-    XtquantService._dispatcher = create_dispatcher(cm)
-    XtquantService._api_surface = XtquantService._dispatcher.surface()
-
-    srv = ThreadedServer(XtquantService, port=18899,
-                         protocol_config={"allow_public_attrs": True,
-                                          "allow_pickle": True,
-                                          "sync_request_timeout": 300})
-    t = threading.Thread(target=srv.start, daemon=True)
-    t.start()
-    time.sleep(0.5)
-    yield srv
-    srv.close()
-    cm.stop()
-    dm.shutdown()
-    for mod in list(sys.modules.keys()):
-        if mod.startswith("xtquant"):
-            del sys.modules[mod]
+from qmt_rpyc import QmtClient
+from qmt_rpyc.transport.codec import dumps, encode, loads
+from qmt_rpyc.contracts.errors import OutcomeUnknownError, ProtocolError, QmtError
+from qmt_rpyc.contracts.operations import CONTRACT_HASH, OPERATIONS
 
 
-class TestQmtClientConnect:
-    def test_connect_and_close(self, mock_server):
-        from qmt_rpyc import QmtClient
-        client = QmtClient.connect("127.0.0.1", port=18899)
-        try:
-            assert client is not None
-        finally:
-            client.close()
+class Root:
+    def __init__(self, callback):
+        self.callback = callback
+        self.calls = []
 
-    def test_context_manager(self, mock_server):
-        from qmt_rpyc import QmtClient
-        from qmt_rpyc.exceptions import NotConnectedError
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            assert client is not None
-        with pytest.raises(NotConnectedError):
-            client.health()
-        client.close()
+    def negotiate(self, digest):
+        assert digest == CONTRACT_HASH
+        return dumps({"contract_version": 2, "contract_hash": CONTRACT_HASH,
+                      "capabilities": Capabilities({op: Capability(True, "fake", None) for op in OPERATIONS})})
 
-
-class TestQmtClientCall:
-    def test_call_xtdata(self, mock_server):
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            result = client.xtdata.get_market_data_ex([], ["600000.SH"], "1d")
-            assert isinstance(result, dict)
-            assert "600000.SH" in result
-
-    def test_call_trader(self, mock_server):
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            order_id = client.trader.order_stock("ACC1", "600000.SH", 23, 100, 5, 10.0)
-            assert isinstance(order_id, int)
-
-    def test_uncontracted_sdk_method_is_hidden(self, mock_server):
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            assert "query_new_purchase_limit" not in client._surface["XtQuantTrader"]["methods"]
-            with pytest.raises(AttributeError):
-                client.trader.query_new_purchase_limit("ACC1")
-
-    def test_xtconstant_inline(self, mock_server):
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            assert client.xtconstant.STOCK_BUY == 23
-
-    def test_health(self, mock_server):
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            h = client.health()
-            assert "connected" in h
+    def call(self, payload):
+        request = loads(payload)
+        self.calls.append(request)
+        result = self.callback(request)
+        if isinstance(result, str):
+            return result
+        return dumps(dict(contract_version=2, request_id=request["request_id"], operation=request["operation"], status="ok", data=result))
 
 
-class TestQmtClientDownload:
-    def test_download_returns_handle(self, mock_server):
-        from qmt_rpyc import QmtClient
-        from qmt_rpyc.proxy import DownloadTaskHandle
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            task = client.xtdata.download_history_data(
-                stock_code="600000.SH", period="1d")
-            assert isinstance(task, DownloadTaskHandle)
-            result = task.wait(timeout=10)
-            assert result["status"] in ("completed", "failed")
+def client(callback):
+    value = QmtClient()
+    value._conn = SimpleNamespace(root=Root(callback))
+    value._negotiate()
+    return value
 
 
-class TestQmtClientEvents:
-    def test_events_are_not_exported_in_v1(self, mock_server):
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            assert not hasattr(client, 'subscribe')
-            assert not hasattr(client.trader, 'register_callback')
+def test_negotiation_is_explicit_and_does_not_fall_back():
+    value = QmtClient()
+    value._conn = SimpleNamespace(root=SimpleNamespace())
+    with pytest.raises(ProtocolError, match="contract negotiation failed"):
+        value._negotiate()
+    connected = client(lambda request: [])
+    assert connected.contract_version == 2
+    assert set(connected.capabilities().operations) == set(OPERATIONS)
 
 
-class TestQmtClientBatch:
-    def test_batch_success(self, mock_server):
-        """Batch call through client returns results in order."""
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            results = client.xtdata.get_instrument_detail.batch([
-                (["000001.SZ"], {}),
-                (["000002.SZ"], {}),
-                (["000003.SZ"], {}),
-            ])
-            assert len(results) == 3
-            for i, r in enumerate(results):
-                assert r["status"] == "ok", f"call {i} failed: {r}"
-                assert "InstrumentID" in r["data"]
-
-    def test_batch_empty(self, mock_server):
-        """Empty batch returns empty results list."""
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            results = client.xtdata.get_instrument_detail.batch([])
-            assert len(results) == 0
-
-    def test_batch_nonexistent_function(self, mock_server):
-        """Non-existent function raises QmtError."""
-        from qmt_rpyc import QmtClient
-        from qmt_rpyc.exceptions import QmtError
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            with pytest.raises(AttributeError):
-                client.xtdata.nonexistent_func.batch([([], {})])
-
-    def test_batch_download_rejected(self, mock_server):
-        """download_* rejected — overall batch fails, raises QmtError."""
-        from qmt_rpyc import QmtClient
-        from qmt_rpyc.exceptions import QmtError
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            with pytest.raises(QmtError):
-                client.xtdata.download_history_data.batch([
-                    (["600000.SH"], {"period": "1d"})])
-
-    def test_batch_dir_discovers_batch(self, mock_server):
-        """dir() on a remote callable includes 'batch'."""
-        from qmt_rpyc import QmtClient
-        with QmtClient.connect("127.0.0.1", port=18899) as client:
-            names = dir(client.xtdata.get_instrument_detail)
-            assert "batch" in names
+def test_requests_use_dates_and_explicit_defaults_without_remote_objects():
+    value = client(lambda request: BatchResult((Success("510050.SH", DailyBarSeries((), "none")),)))
+    result = value.market.get_daily_bars(["510050.SH"], end=date(2026, 9, 24), count=20)
+    assert result.require_all()["510050.SH"].rows == ()
+    payload = value._conn.root.calls[0]["payload"]
+    assert payload == {"codes": ["510050.SH"], "start": None, "end": "2026-09-24", "count": 20,
+                       "adjustment": "none", "fill_data": True}
 
 
-def test_pre_protocol_authentication_preserves_obtain():
-    import sys
-    import threading
+def test_empty_codes_do_not_dispatch_or_masquerade_as_market_query():
+    value = client(lambda request: pytest.fail("should not dispatch"))
+    assert value.market.get_ticks([]).items == ()
+    assert value._conn.root.calls == []
 
-    from tests import _xtquant_mock
-    sys.modules["xtquant"] = _xtquant_mock
-    sys.modules["xtquant.xtdata"] = _xtquant_mock.xtdata
-    sys.modules["xtquant.xttrader"] = _xtquant_mock
-    sys.modules["xtquant.xttype"] = _xtquant_mock
-    sys.modules["xtquant.xtconstant"] = _xtquant_mock.xtconstant
 
-    from rpyc.utils.server import ThreadedServer
-    from qmt_rpyc import QmtClient
-    from qmt_rpyc.protocol import make_server_authenticator
-    from qmt_rpyc.server.api_surface import build_api_surface
-    from qmt_rpyc.server.adapters import create_dispatcher
-    from qmt_rpyc.server.auth_limiter import AuthRateLimiter
-    from qmt_rpyc.server.connection import ConnectionManager
-    from qmt_rpyc.server.download_manager import DownloadTaskManager
-    from qmt_rpyc.server.service import XtquantService
+def test_single_string_is_not_split_into_security_codes():
+    value = client(lambda request: pytest.fail("should not dispatch"))
+    with pytest.raises(ValueError, match="sequence"):
+        value.market.get_ticks("ABC")
+    assert value._conn.root.calls == []
 
-    manager = ConnectionManager(
-        path="test", session_id=1, account_id="ACC1"
-    )
-    manager._init_trader()
-    manager.connect()
-    downloads = DownloadTaskManager(max_workers=1)
-    XtquantService._require_auth = True
-    XtquantService._connection_mgr = manager
-    XtquantService._download_mgr = downloads
-    XtquantService._dispatcher = create_dispatcher(manager)
-    XtquantService._api_surface = XtquantService._dispatcher.surface()
-    server = ThreadedServer(
-        XtquantService,
-        hostname="127.0.0.1",
-        port=0,
-        authenticator=make_server_authenticator(
-            "test-secret", AuthRateLimiter()
-        ),
-        protocol_config={
-            "allow_public_attrs": True,
-            "allow_pickle": True,
-        },
-    )
-    port = server.listener.getsockname()[1]
-    thread = threading.Thread(target=server.start, daemon=True)
-    thread.start()
-    try:
-        with pytest.raises(Exception):
-            QmtClient.connect(
-                "127.0.0.1", port=port, auth_key="wrong-secret"
-            )
-        with QmtClient.connect(
-                "127.0.0.1", port=port,
-                auth_key="test-secret") as client:
-            health = client.health()
-            assert isinstance(health, dict)
-            assert health["connected"] is True
-    finally:
-        server.close()
-        downloads.shutdown()
-        manager.stop()
-        thread.join(timeout=2)
-        XtquantService._require_auth = False
+
+@pytest.mark.parametrize("operation", ["reference.list_sectors", "reference.get_sector_members", "instruments.list_option_underlyings"])
+@pytest.mark.parametrize("identities", [[""], [" "], [" padded"], ["padded "], ["B", "A"], ["A", "A"]])
+def test_discovery_identity_collections_are_validated(operation, identities):
+    value = client(lambda request: identities)
+    group, method = operation.split(".")
+    call = getattr(getattr(value, group), method)
+    with pytest.raises(ProtocolError):
+        call("sector") if method == "get_sector_members" else call()
+
+
+@pytest.mark.parametrize("change", ["extra", "missing"])
+def test_runtime_capabilities_require_exact_operation_set(change):
+    operations = {name: Capability(True, "fake", None) for name in OPERATIONS}
+    if change == "extra":
+        operations["undeclared.operation"] = Capability(True, "fake", None)
+    else:
+        del operations["market.get_ticks"]
+    value = client(lambda request: Capabilities(operations))
+    with pytest.raises(ProtocolError, match="operation set"):
+        value.system.get_capabilities()
+
+
+@pytest.mark.parametrize("codes", [("B", "A"), ("A",), ("A", "A"), ("A", "B", "C")])
+def test_batch_rejects_reordering_omission_duplication_or_extra_identity(codes):
+    value = client(lambda request: {"items": [{"status": "error", "code": code, "error": {"error_type": "MISSING_RESULT", "message": "missing"}} for code in codes]})
+    with pytest.raises(ProtocolError):
+        value.market.get_ticks(["A", "B"])
+
+
+@pytest.mark.parametrize("field,bad", [("request_id", "wrong"), ("operation", "wrong"), ("contract_version", 1)])
+def test_read_response_must_match_request_context(field, bad):
+    def response(request):
+        envelope = dict(contract_version=2, request_id=request["request_id"], operation=request["operation"], status="ok", data=[])
+        envelope[field] = bad
+        return dumps(envelope)
+    with pytest.raises(ProtocolError):
+        client(response).reference.list_sectors()
+
+
+@pytest.mark.parametrize("call", [lambda c: c.trading.submit_order("account", "600000.SH", "BUY", 100, 5),
+                                  lambda c: c.trading.cancel_order("account", order_id="123"),
+                                  lambda c: c.downloads.start_sectors()])
+def test_invalid_mutation_response_is_unknown_and_never_retried(call):
+    value = client(lambda request: "bad JSON")
+    with pytest.raises(OutcomeUnknownError) as caught:
+        call(value)
+    assert caught.value.outcome == "unknown"
+    assert len(value._conn.root.calls) == 1
+
+
+def test_transport_error_preserves_read_vs_mutation_outcome():
+    def broken(request):
+        raise EOFError("lost")
+    value = client(broken)
+    with pytest.raises(QmtError) as caught:
+        value.reference.list_sectors()
+    assert caught.value.phase == "transport" and caught.value.outcome == "not_applicable"
+    with pytest.raises(OutcomeUnknownError):
+        value.downloads.start_index_weights()
+    assert len(value._conn.root.calls) == 2
+
+
+def test_known_preexecution_error_is_not_unknown_submission():
+    def response(request):
+        error = OperationError("NOT_CONNECTED", "not ready", request["operation"], 2,
+                                 "pre_execution", "not_executed", request["request_id"])
+        return dumps(dict(contract_version=2, request_id=request["request_id"], operation=request["operation"], status="error", error=error))
+    with pytest.raises(QmtError) as caught:
+        client(response).trading.submit_order("a", "600000.SH", "BUY", 100, 1)
+    assert not isinstance(caught.value, OutcomeUnknownError)
+    assert caught.value.outcome == "not_executed"
+
+
+def test_cancel_requires_exactly_one_identity_kind():
+    value = client(lambda request: RequestSucceeded(0))
+    for kwargs in ({}, {"order_id": "123", "market": "SH"}, {"market": "SH"}):
+        with pytest.raises(ValueError):
+            value.trading.cancel_order("account", **kwargs)
+    value.trading.cancel_order("account", market="SH", exchange_order_id="000123")
+    assert value._conn.root.calls[0]["payload"]["target"] == {"kind": "exchange_order_id", "market": "SH", "exchange_order_id": "000123"}
+
+
+def test_download_failed_terminal_is_returned_without_resubmission():
+    at = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    error = OperationError("SOURCE_ERROR", "failed", "downloads.start_history", 2, "sdk_execution", "unknown", "original")
+    status = DownloadStatus("task", "HISTORY", "failed", at, at, None, error)
+    value = client(lambda request: status)
+    result = value.downloads.handle(TaskRef("task", "HISTORY")).wait()
+    assert result.status == "failed" and result.error.message == "failed"
+    assert [call["operation"] for call in value._conn.root.calls] == ["downloads.get_task"]
+
+
+def test_download_wait_timeout_does_not_cancel_or_restart(monkeypatch):
+    at = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    status = DownloadStatus("task", "HISTORY", "running", at, None, None, None)
+    value = client(lambda request: status)
+    clock = iter((0, 2))
+    monkeypatch.setattr("qmt_rpyc.client.downloads.time.monotonic", lambda: next(clock))
+    with pytest.raises(TimeoutError):
+        value.downloads.handle(TaskRef("task", "HISTORY")).wait(timeout=1)
+    assert [call["operation"] for call in value._conn.root.calls] == ["downloads.get_task"]

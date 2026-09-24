@@ -1,3 +1,4 @@
+from tests.fixtures import mock_xtquant
 import ssl
 import threading
 
@@ -44,16 +45,15 @@ def test_config_requires_complete_tls_pair():
         _validate_config(_config(tls_keyfile="server.key"))
 
 
-def test_server_serves_health_and_discovery_during_blocked_qmt_init(monkeypatch):
-    import qmt_rpyc.server.adapters as adapters
-    from qmt_rpyc.server.connection import ConnectionManager
+def test_server_serves_health_and_discovery_during_blocked_qmt_init(mock_xtquant, monkeypatch):
+    import qmt_rpyc.adapters.xtquant_2_0_6_1.factory as adapters
+    from qmt_rpyc.adapters.xtquant_2_0_6_1.connection import ConnectionManager
     from qmt_rpyc.server.service import XtquantService
     import rpyc.utils.server
 
     entered = threading.Event()
     release = threading.Event()
     calls = []
-    surface = {"xtdata": {"functions": {"example": {}}}}
 
     def blocked_init(self):
         entered.set()
@@ -68,10 +68,14 @@ def test_server_serves_health_and_discovery_during_blocked_qmt_init(monkeypatch)
             try:
                 assert entered.wait(1)
                 service = XtquantService()
-                health = service.exposed_health()
+                from qmt_rpyc.transport.codec import loads, dumps
+                from qmt_rpyc.contracts.operations import CONTRACT_HASH
+                from qmt_rpyc.contracts.common import EmptyRequest
+                negotiated = loads(service.exposed_negotiate(CONTRACT_HASH))
+                health = loads(service.exposed_call(dumps(dict(contract_version=2, request_id="test", operation="system.get_health", payload={}))))["data"]
                 assert health["connected"] is False
                 assert health["connection_state"] == "connecting"
-                assert service.exposed_get_api_surface()["xtdata"] == surface["xtdata"]
+                assert "market.get_ticks" in negotiated["capabilities"]["operations"]
                 calls.append("rpc available")
             finally:
                 release.set()
@@ -81,7 +85,6 @@ def test_server_serves_health_and_discovery_during_blocked_qmt_init(monkeypatch)
 
     monkeypatch.setattr(ConnectionManager, "_init_trader", blocked_init)
     from types import SimpleNamespace
-    monkeypatch.setattr(adapters, "create_dispatcher", lambda cm: SimpleNamespace(surface=lambda: {**surface, "capabilities": {}}))
     monkeypatch.setattr(rpyc.utils.server, "ThreadedServer", FakeServer)
     try:
         assert start_server(_config(auth_key=None, allow_insecure=True)) == 0
@@ -91,28 +94,28 @@ def test_server_serves_health_and_discovery_during_blocked_qmt_init(monkeypatch)
 
 
 def test_missing_sdk_fails_before_listener_or_background_attempt(monkeypatch):
-    import qmt_rpyc.server.adapters as adapters
-    from qmt_rpyc.server.connection import ConnectionManager
+    import qmt_rpyc.adapters.xtquant_2_0_6_1.factory as adapters
+    from qmt_rpyc.adapters.xtquant_2_0_6_1.connection import ConnectionManager
     import rpyc.utils.server
 
-    def missing_sdk(connection):
+    def missing_sdk(*args):
         raise ImportError("missing SDK")
 
     def unexpected(*args, **kwargs):
         pytest.fail("listener/connection must not start with a broken SDK")
 
-    monkeypatch.setattr(adapters, "create_dispatcher", missing_sdk)
+    monkeypatch.setattr(adapters, "create_providers", missing_sdk)
     monkeypatch.setattr(ConnectionManager, "start", unexpected)
     monkeypatch.setattr(rpyc.utils.server, "ThreadedServer", unexpected)
     with pytest.raises(ImportError, match="missing SDK"):
         start_server(_config())
 
 
-def test_tls_uses_server_context_and_cleanup_order(monkeypatch):
+def test_tls_uses_server_context_and_cleanup_order(mock_xtquant, monkeypatch):
     import socket
-    import qmt_rpyc.server.adapters as adapters
-    import qmt_rpyc.server.connection as connection
-    import qmt_rpyc.server.download_manager as download_manager
+    import qmt_rpyc.adapters.xtquant_2_0_6_1.factory as adapters
+    import qmt_rpyc.adapters.xtquant_2_0_6_1.connection as connection
+    import qmt_rpyc.server.downloads as download_manager
     import rpyc.utils.server
 
     calls = []
@@ -179,7 +182,8 @@ def test_tls_uses_server_context_and_cleanup_order(monkeypatch):
     monkeypatch.setattr(
         download_manager, "DownloadTaskManager", FakeDownloadManager)
     from types import SimpleNamespace
-    monkeypatch.setattr(adapters, "create_dispatcher", lambda cm: SimpleNamespace(surface=lambda: {}))
+    providers = adapters.create_providers()
+    monkeypatch.setattr(adapters, "create_providers", lambda *args: providers)
     monkeypatch.setattr(rpyc.utils.server, "ThreadedServer", FakeServer)
     monkeypatch.setattr(socket, "socket", lambda *args: FakeSocket())
     monkeypatch.setattr(ssl, "SSLContext", FakeContext)

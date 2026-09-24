@@ -1,60 +1,40 @@
-import time
+"""Socket challenge authentication, separate from the business contract."""
 import pytest
-from qmt_rpyc.protocol import (
-    API_SURFACE_SCHEMA_VERSION, PROTOCOL_VERSION,
-    make_auth_token, verify_auth_token,
-    STATUS_OK, STATUS_ERROR, AUTH_TIMESTAMP_WINDOW, EVENT_TYPES,
+from qmt_rpyc.transport.auth import (
+    PROTOCOL_VERSION, SocketAuthError, _auth_digest, _recv_exact,
+    authenticate_client_socket,
 )
 
 
-class TestAuthProtocol:
-    def test_make_and_verify_token_success(self):
-        key = "secret-key"
-        nonce = "abcdef1234567890"
-        ts = int(time.time())
-        token = make_auth_token(key, nonce, ts)
-        assert verify_auth_token(key, nonce, ts, token) is True
+class Socket:
+    def __init__(self, chunks):
+        self.chunks = iter(chunks)
+        self.timeout = 10
+    def recv(self, size):
+        return next(self.chunks, b'')
+    def gettimeout(self):
+        return self.timeout
+    def settimeout(self, value):
+        self.timeout = value
 
-    def test_verify_token_wrong_key(self):
-        nonce = "abcdef1234567890"
-        ts = int(time.time())
-        token = make_auth_token("correct-key", nonce, ts)
-        assert verify_auth_token("wrong-key", nonce, ts, token) is False
 
-    def test_verify_token_expired_timestamp(self):
-        key = "secret-key"
-        nonce = "abcdef1234567890"
-        ts = int(time.time()) - AUTH_TIMESTAMP_WINDOW - 1
-        token = make_auth_token(key, nonce, ts)
-        assert verify_auth_token(key, nonce, ts, token) is False
+def test_challenge_digest_binds_key_versions_and_nonce():
+    expected = _auth_digest('key', 1, 1, b'challenge')
+    assert expected != _auth_digest('other', 1, 1, b'challenge')
+    assert expected != _auth_digest('key', 2, 1, b'challenge')
+    assert expected != _auth_digest('key', 1, 2, b'challenge')
+    assert expected != _auth_digest('key', 1, 1, b'new challenge')
+    assert PROTOCOL_VERSION == 1
 
-    def test_verify_token_tampered_nonce(self):
-        key = "secret-key"
-        ts = int(time.time())
-        token = make_auth_token(key, "original-nonce", ts)
-        assert verify_auth_token(key, "tampered-nonce", ts, token) is False
 
-    @pytest.mark.parametrize("nonce,timestamp,token", [
-        ("short", 1, "0" * 64),
-        ("abcdef1234567890", "1", "0" * 64),
-        ("abcdef1234567890", 1, "short"),
-    ])
-    def test_invalid_auth_fields_are_rejected(
-            self, nonce, timestamp, token):
-        assert verify_auth_token(
-            "secret-key", nonce, timestamp, token) is False
+def test_auth_receives_fragmented_bytes_and_rejects_early_close():
+    assert _recv_exact(Socket([b'a', b'bc']), 3) == b'abc'
+    with pytest.raises(SocketAuthError, match='closed'):
+        _recv_exact(Socket([b'a']), 3)
 
-class TestConstants:
-    def test_protocol_versions_are_explicit(self):
-        assert PROTOCOL_VERSION == 1
-        assert API_SURFACE_SCHEMA_VERSION == 1
 
-    def test_status_constants(self):
-        assert STATUS_OK == "ok"
-        assert STATUS_ERROR == "error"
-
-    def test_event_types_mapping(self):
-        assert "order" in EVENT_TYPES
-        assert EVENT_TYPES["order"] == "on_stock_order"
-        assert EVENT_TYPES["disconnect"] == "on_disconnected"
-        assert "reconnect" in EVENT_TYPES
+def test_wrong_magic_is_rejected_and_original_timeout_restored():
+    sock = Socket([b'X' * 42])
+    with pytest.raises(SocketAuthError, match='challenge'):
+        authenticate_client_socket(sock, 'key')
+    assert sock.timeout == 10

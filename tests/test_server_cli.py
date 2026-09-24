@@ -90,7 +90,7 @@ def test_check_reports_failed_qmt_connection_from_blocking_probe(
     import sys
     import types
 
-    from qmt_rpyc.server.connection import ConnectionManager
+    from qmt_rpyc.adapters.xtquant_2_0_6_1.connection import ConnectionManager
 
     config = tmp_path / "config.env"
     config.write_text(
@@ -169,3 +169,42 @@ def test_missing_server_extra_has_install_hint(monkeypatch, capsys):
     assert payload["error_type"] == "ModuleNotFoundError"
     assert "qmt-rpyc[server]" in payload["hint"]
     assert "Python 3.10 or 3.11" in payload["hint"]
+
+
+def test_init_config_preserves_adapter_and_debug(tmp_path):
+    path = tmp_path / 'config.env'
+    cli._write_env(path, {'QMT_RPYC_ADAPTER': 'xtquant_2.0.6.1', 'QMT_RPYC_DEBUG': '1'})
+    values = cli._read_env(path)
+    assert values['QMT_RPYC_ADAPTER'] == 'xtquant_2.0.6.1'
+    assert values['QMT_RPYC_DEBUG'] == '1'
+
+
+@pytest.mark.parametrize("approve_import", [False, True])
+def test_non_interactive_existing_env_never_prompts(
+        tmp_path, monkeypatch, approve_import):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("QMT_RPYC_AUTH_KEY", raising=False)
+    (tmp_path / '.env').write_text(
+        'QMT_RPYC_AUTH_KEY=your-secret-key-here\n'
+        'QMT_RPYC_DEBUG=1\nQMT_RPYC_ALLOW_INSECURE=1\n',
+        encoding='utf-8',
+    )
+    monkeypatch.setattr(cli, 'detect_environment', lambda: {})
+    monkeypatch.setattr(cli, 'private_ipv4_addresses', lambda: [])
+    monkeypatch.setattr('builtins.input', lambda *args: pytest.fail('unexpected prompt'))
+    target = tmp_path / 'config.env'
+    argv = ['--config', str(target), 'init', '--non-interactive']
+    if approve_import:
+        argv.append('--yes')
+    args = cli.build_parser().parse_args(argv)
+    if not approve_import:
+        with pytest.raises(ValueError, match='requires --yes'):
+            cli._cmd_init(args)
+        assert not target.exists()
+        return
+    cli._cmd_init(args)
+    values = cli._read_env(target)
+    assert values['QMT_RPYC_AUTH_KEY'] != 'your-secret-key-here'
+    assert len(values['QMT_RPYC_AUTH_KEY']) >= 32
+    assert values['QMT_RPYC_DEBUG'] == '1'
+    assert values['QMT_RPYC_ALLOW_INSECURE'] == '1'

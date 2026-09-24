@@ -1,6 +1,6 @@
-import time
-import threading
 import logging
+import threading
+import time
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)

@@ -21,5 +21,6 @@ qmt-rpyc is designed for a trusted private LAN. Possession of
 all available account data. HMAC authenticates but does not encrypt RPC
 traffic. Use TLS or a VPN across untrusted networks.
 
-If a shared key is exposed, stop the server, run `qmt-rpyc-server init` to
-replace it, update every client profile, and restart the server.
+If a shared key is exposed, stop the server, replace `QMT_RPYC_AUTH_KEY` in the active server configuration and any overriding
+environment variable, update every client profile, and restart the server.
+Running `init` again preserves an existing valid key; it does not rotate it.

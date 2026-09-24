@@ -1,17 +1,7 @@
 import time
 import threading
 import pytest
-from qmt_rpyc.server.download_manager import DownloadTaskManager, DownloadTask, is_download_function
-
-
-class TestIsDownloadFunction:
-    def test_download_prefix(self):
-        assert is_download_function("download_history_data") is True
-        assert is_download_function("download_financial_data") is True
-
-    def test_non_download(self):
-        assert is_download_function("get_market_data") is False
-        assert is_download_function("order_stock") is False
+from qmt_rpyc.server.downloads import DownloadTaskManager, DownloadTask
 
 
 class TestDownloadTaskManager:

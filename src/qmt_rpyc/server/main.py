@@ -1,15 +1,11 @@
 # server/main.py
+import faulthandler
+import logging
 import os
 import sys
-import logging
-import faulthandler
 from pathlib import Path
 
-import pandas
-import numpy
-
-import qmt_rpyc.server.datetime_patch
-
+from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
 from qmt_rpyc.server.logging_config import setup_logging
 from qmt_rpyc.server.redaction import mask_account
 from qmt_rpyc.version import __version__
@@ -80,6 +76,8 @@ def _load_config(config_path=None):
         "port": _env_int("QMT_RPYC_PORT", 18812, 1, 65535),
         "auth_key": os.environ.get("QMT_RPYC_AUTH_KEY"),
         "allow_insecure": _env_bool("QMT_RPYC_ALLOW_INSECURE"),
+        "debug": _env_bool("QMT_RPYC_DEBUG"),
+        "adapter": os.environ.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER),
         "qmt_path": os.environ.get("QMT_PATH", ""),
         "qmt_session_id": _env_int("QMT_SESSION_ID", 1, 0),
         "qmt_account_id": os.environ.get("QMT_ACCOUNT_ID", ""),
@@ -102,6 +100,7 @@ def _load_config(config_path=None):
 
 
 def _validate_config(cfg):
+    select_adapter(cfg.get("adapter", DEFAULT_ADAPTER))
     auth_key = cfg.get("auth_key")
     invalid_auth_key = (
         not isinstance(auth_key, str)
@@ -134,9 +133,11 @@ def _print_startup_info(cfg, cm):
         "  qmt-rpyc server",
         "=" * 56,
         "  Version  : {}".format(__version__),
+        "  Adapter  : {}".format(cfg.get("adapter", DEFAULT_ADAPTER)),
         "  Listen   : {}:{}".format(host, port),
         "  Auth     : {}".format(auth),
         "  TLS      : {}".format(tls),
+        "  SDK debug: {}".format("on" if cfg.get("debug", False) else "off"),
         "  QMT      : {}".format(qmt),
         "  Failures : {}".format(health["consecutive_failures"]),
         "  Retry at : {}".format(health["next_retry_at"] or "(none)"),
@@ -162,17 +163,20 @@ def start_server(cfg, tls=None):
     auth_key = cfg["auth_key"]
 
     import socket
+
     from rpyc.utils.server import ThreadedServer
-    from qmt_rpyc.server.service import XtquantService
-    from qmt_rpyc.server.connection import ConnectionManager
-    from qmt_rpyc.server.download_manager import DownloadTaskManager
-    from qmt_rpyc.server.adapters import create_dispatcher
+
+    adapter = select_adapter(cfg.get("adapter", DEFAULT_ADAPTER))
+    ConnectionManager = adapter.connection_type()
     from qmt_rpyc.server.auth_limiter import rate_limiter
-    from qmt_rpyc.protocol import make_server_authenticator
+    from qmt_rpyc.server.dispatch import Dispatcher
+    from qmt_rpyc.server.downloads import DownloadTaskManager
+    from qmt_rpyc.server.service import XtquantService
+    from qmt_rpyc.transport.auth import make_server_authenticator
 
     config = {
-        "allow_public_attrs": True,
-        "allow_pickle": True,
+        "allow_public_attrs": False,
+        "allow_pickle": False,
         "sync_request_timeout": 300,
     }
 
@@ -199,8 +203,15 @@ def start_server(cfg, tls=None):
         XtquantService._active_clients = 0
         # Validate SDK imports before opening the listener. Local installation
         # failures are fatal; Trader construction and connection run separately.
-        XtquantService._dispatcher = create_dispatcher(cm)
-        XtquantService._api_surface = XtquantService._dispatcher.surface()
+        workers = int(os.environ.get('QMT_BATCH_MAX_WORKERS', '8'))
+        if workers < 1:
+            raise ValueError('QMT_BATCH_MAX_WORKERS must be positive')
+        XtquantService._dispatcher = Dispatcher(adapter.create_providers(cm, workers), dm,
+            cm.get_health_status, lambda: XtquantService._active_clients)
+
+        XtquantService._debug_handler = None
+        if cfg.get('debug', False):
+            XtquantService._debug_handler = adapter.create_debug(cm)
 
         authenticator = (
             make_server_authenticator(auth_key, rate_limiter)

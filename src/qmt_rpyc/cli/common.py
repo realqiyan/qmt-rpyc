@@ -5,7 +5,6 @@ import sys
 
 from qmt_rpyc.version import __version__
 
-
 EXIT_INTERRUPTED = 130
 
 

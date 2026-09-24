@@ -2,15 +2,17 @@
 
 ## Project Overview
 
-qmt-rpyc is an RPyC bridge that exposes the xtquant SDK for QMT/MiniQMT to remote clients. The server runs on Windows beside QMT; the client package works on Linux, macOS, and Windows.
+qmt-rpyc is an RPyC bridge that exposes stable typed business operations backed by xtquant for QMT/MiniQMT to remote clients. The server runs on Windows beside QMT; the client package works on Linux, macOS, and Windows.
 
 ## Project Structure
 
-- `client/`: cross-platform `QmtClient`, dynamic API proxies, exceptions, download handles, and the read-only self-test registry.
-- `server/`: Windows service, API discovery, QMT connection lifecycle, serialization, authentication, event bus, logging, and asynchronous downloads.
-- `common/`: protocol constants and HMAC helpers shared by client and server.
-- `tests/`: pytest unit and integration tests. `_xtquant_mock.py` supplies a portable in-memory xtquant replacement.
-- `scripts/`: environment setup, validation, testing, and benchmarking tools.
+- `src/qmt_rpyc/contracts/`: pure Python requests and results grouped by business capability; operation registry and schema generation.
+- `src/qmt_rpyc/client/`: explicit `QmtClient` and typed capability groups, download handles and read-only diagnostics.
+- `src/qmt_rpyc/transport/`: socket authentication, RPyC connection, JSON codec and correlated messages.
+- `src/qmt_rpyc/server/`: RPC entry, operation dispatch, downloads, health and process lifecycle.
+- `src/qmt_rpyc/adapters/`: typed provider interfaces; `xtquant_2_0_6_1/` owns native SDK translation, probing, discovery and connection lifecycle.
+- `tests/`: portable tests with a synthetic SDK; opt-in deployment tests.
+- `scripts/`: setup, verification, schema export and read-only benchmarking.
 
 ## Setup, Run, and Test Commands
 
@@ -19,7 +21,7 @@ Client setup and packaging:
 ```bash
 scripts/setup.sh
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 Windows server setup and startup:
@@ -27,7 +29,8 @@ Windows server setup and startup:
 ```bat
 scripts\setup.bat
 start-rpyc.bat
-REM Equivalent entry point: qmt-rpyc-server start
+REM Equivalent source entry point:
+.venv\Scripts\qmt-rpyc-server.exe --config .env start
 ```
 
 Common test commands:
@@ -36,18 +39,18 @@ Common test commands:
 python -m pytest tests/ -v
 python -m pytest tests/ -v -k "not live"
 python -m pytest tests/test_service.py -v
-python -m pytest tests/test_service.py::test_health -v
+python -m pytest tests/test_service.py::test_all_read_capabilities_have_typed_results -v
 python -m pytest tests/test_live_integration.py -v
 bash scripts/test.sh
 ```
 
-`scripts/test.sh` runs the portable client-oriented subset. On Windows, `scripts\test_server.bat` runs the full server suite. Live tests require MiniQMT, xtquant, and a valid `.env`; otherwise they skip automatically.
+`scripts/test.sh` runs the portable client-oriented subset. On Windows, `scripts\test_server.bat` runs the full server suite. Live tests are opt-in via `QMT_RPYC_LIVE=1` and use the client profile named by `QMT_RPYC_PROFILE` (default: `default`). They can run from Linux/macOS without a local SDK; connection failures fail once enabled.
 
 Important helpers:
 
 | Path | Purpose |
 |---|---|
-| `scripts/env_check.py` | Validates Python, dependencies, QMT availability, xtquant imports, and `.env`; it can detect MiniQMT and wire xtquant automatically. |
+| `qmt-rpyc-server init / check / xtquant repair` | Initializes configuration, checks the local SDK/QMT environment, and repairs the SDK link without requiring RPC. |
 | `scripts/dump_api_surface.py` | Dumps the actual broker-customized xtquant API surface from the Windows server environment as JSON. |
 | `scripts/setup.bat` | Creates the server environment, installs dependencies, and runs the environment check. |
 | `scripts/setup.sh` | Creates a cross-platform client virtual environment. |
@@ -55,30 +58,28 @@ Important helpers:
 
 ## Architecture and Data Flow
 
-`server/main.py` is the server entry point. It loads `.env`, enables native crash diagnostics, applies the Python timestamp compatibility patch, configures rotating logs, initializes shared connection and download managers, probes contract adapters, and starts an RPyC `ThreadedServer` with optional TLS.
+`server/main.py` composes typed SDK providers, task manager, dispatcher and authenticated RPyC service. RPC starts independently of background QMT connection attempts. `service.py` exposes contract negotiation and JSON operation calls, plus a separately gated SDK diagnostic RPC.
 
-`server/service.py` exposes authentication, contract negotiation, xtdata/trader dispatch, batch calls, download status, and health checks. Before invoking pybind11-backed xtquant functions, remote RPyC netrefs must be materialized into local Python objects. Responses are converted by `server/serializer.py`; numpy arrays, pandas DataFrames, and xtquant objects become JSON-safe structures, with recursion limited to 64 levels.
+`contracts/operations.py` fixes the 28 public operations. Public requests/results are frozen dataclasses grouped by domain; protocol versions belong to metadata, not import paths. Contracts never depend on transport, client, server or SDK packages. The client never imports server or adapters. `__init__.py` contains exports only.
 
-`server/connection.py` owns trader initialization, heartbeat checks, callback forwarding, and exponential-backoff reconnection. At runtime it discovers Trader methods with an exact `account` parameter and converts positional or keyword account ID strings into `StockAccount`; `_ACCOUNT_METHODS` remains a compatibility fallback when SDK signatures are unavailable. The shared `EventBus` provides bounded per-subscription queues, while `DownloadTaskManager` runs `download_*` work asynchronously.
+Adapters return public models directly; SDK names and data transformations remain private to `adapters/xtquant_2_0_6_1`. Probes inspect actual deployed signatures/constants without SDK calls. Discovery is diagnostics only and cannot add public operations. The explicitly enabled `QMT_RPYC_DEBUG=1` diagnostic entry may invoke direct public SDK methods outside the operation registry; it is authenticated, off by default, and not a stable application contract. `adapters/interfaces.py` is the replacement seam, not generic string invocation.
 
-The client negotiates a fixed bridge contract and its hash at connection time. Proxies and constants come from the bundled snapshot; capabilities report SDK compatibility separately. Unknown proxy attributes are rejected. Downloads use `DownloadTaskHandle`; non-idempotent requests never retry after an unknown outcome. Public event delivery is outside V1.
-
-Batching is supported only for xtdata calls to the same function. The project intentionally retains the existing bounded concurrent batch implementation; do not introduce process-wide xtdata serialization as part of bug fixes unless this decision is explicitly revisited. The server rejects `download_*` batch calls, caps batches at 500 entries, and keeps per-call failures isolated in the result list.
+Keep bounded concurrent batch execution (500 distinct codes maximum, per-item errors, input order); do not introduce process-wide xtdata serialization. Non-idempotent requests never retry after an unknown outcome. Public callback/event delivery is outside the contract. See `docs/design/architecture.md` and `docs/api/contract.md`.
 
 ## Runtime Constraints and Configuration
 
-- The server must use Python 3.10 or 3.11 because xtquant native extensions do not support CPython 3.12+.
+- The deployed broker SDK requires 64-bit Python 3.10 or 3.11 on Windows.
 - The client supports Python 3.9+.
 - Server compatibility pins include `numpy>=1.24,<2` and `pandas>=2,<3`.
 - The deployed xtquant SDK is a broker-customized offline build and may differ from public xtquant releases and documentation. Treat the API surface discovered from the actual Windows deployment as the source of truth for supported functions and signatures.
-- Runtime API exposure is fixed by `src/qmt_rpyc/contracts/v1.json` (22 APIs, 16 constants). `server/adapters` selects server-only SDK strategies per endpoint; multiple SDK strategies may implement the same contract version. Keep full SDK discovery for diagnostics only. Never mutate a published contract snapshot or expose unselected SDK methods. See `docs/design/contract-v1-implementation.md`.
-- API discovery does not by itself guarantee transport compatibility. Trader methods that accept callbacks require separate live validation because the client does not run an explicit RPyC background-serving thread.
+- Runtime API exposure is fixed by `src/qmt_rpyc/contracts/operations.py`; shipped contracts are immutable. SDK compatibility is reported per operation.
+- Diagnostic discovery does not guarantee JSON transport compatibility. Native callbacks cannot be passed through the debug JSON interface.
 - Production deployment is confined to a trusted internal LAN. It currently authenticates clients with the shared `QMT_RPYC_AUTH_KEY`; TLS and mTLS certificates are not deployed.
 - Each server instance is dedicated to one person's QMT deployment and securities account environment, with one Trader shared by all connected clients.
 - Possession of `QMT_RPYC_AUTH_KEY` grants full trust within that server instance: clients may call every contracted API and access account data available through it. Per-client authorization and multi-tenant isolation are out of scope.
-- Copy `.env.example` to `.env`. Never commit authentication keys, account IDs, certificates, local QMT paths, or logs.
+- Source setup/start scripts explicitly use the repository `.env`; the managed Windows installation defaults to `%LOCALAPPDATA%\qmt-rpyc\config.env`. Use `qmt-rpyc-server --config PATH init` for other locations. Server environment variables override the selected config. Never commit authentication keys, account IDs, certificates, local QMT paths, or logs.
 - Client and server must use the same `QMT_RPYC_AUTH_KEY`. TLS and mTLS are configured through the `QMT_RPYC_TLS_*` variables.
-- Authentication uses HMAC-SHA256 with timestamp/nonce validation and per-IP failure throttling.
+- Authentication uses an HMAC-SHA256 server challenge before RPyC startup, with per-IP failure throttling.
 
 ## Coding Style and Naming
 
@@ -88,9 +89,9 @@ No formatter or linter is configured, so match neighboring code and keep imports
 
 ## Testing Guidelines
 
-Name files `test_<area>.py` and tests `test_<behavior>`. Add focused regression coverage for bug fixes and use `_xtquant_mock.py` unless real QMT behavior is specifically under test. `tests/conftest.py` adds the repository root to `sys.path`. The live suite exercises the real API surface and needs QMT running with `.env` configured. No coverage threshold is currently enforced.
+Name files `test_<area>.py` and tests `test_<behavior>`. Add focused regression coverage for bug fixes and use `_xtquant_mock.py` unless real QMT behavior is specifically under test. `tests/conftest.py` adds the repository root and `src` to `sys.path`. Full tests require `.[server,dev]` on Python 3.10/3.11; use `scripts/test.sh` with `.[dev]` for client-only environments. No coverage threshold is currently enforced.
 
-`QmtClient.self_test()` is separate from pytest: it probes 30+ read-only interfaces on a connected server and returns passed, failed, skipped, duration, and detailed results. Missing API functions, unavailable accounts, and unsupported queries should skip rather than fail when appropriate.
+`QmtClient.self_test()` probes read-only typed capabilities; unavailable capabilities or missing account inputs skip. Live tests require an explicit `QMT_RPYC_LIVE=1` and a configured client profile.
 
 ## Commit and Pull Request Guidelines
 
@@ -112,7 +113,7 @@ Before creating a release:
    and other local environment data.
 3. Update `src/qmt_rpyc/version.py`, `CHANGELOG.md`, and version-specific
    examples in `README.md` and `README.en.md`.
-4. Run `python -m pytest tests/ -v`. Live tests may skip outside Windows/QMT,
+4. Run `python -m pytest tests/ -v`. Live tests skip unless explicitly enabled,
    but the portable and mocked suites must pass.
 5. Build into a clean temporary directory with `python -m build --outdir
    <temp-dir>`, run `python -m twine check <temp-dir>/*`, install the wheel in

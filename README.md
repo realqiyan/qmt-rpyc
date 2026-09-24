@@ -1,223 +1,107 @@
 # qmt-rpyc
 
-当前工作树为 **0.4.0.dev2（未发布）**，引入固定 V1 契约，需要服务端、客户端和使用方统一升级。下列 PyPI 安装说明仍针对已发布版本；本次本地 wheel 联调、适配器扩展方式及边界见[实现说明](docs/design/contract-v1-implementation.md)。
+通过固定的 Python 模型和操作连接 QMT/MiniQMT。Windows 服务端对接券商定制 xtquant；客户端支持 Linux、macOS 和 Windows。
 
-[English](README.en.md)
+当前源码版本 **0.5.0.dev2，未发布**。建议客户端与服务端安装同一份构建；连接时按契约版本和指纹检查兼容性。
+[English](README.en.md) · [架构](docs/design/architecture.md) · [完整接口及字段](docs/api/contract.md)
 
-qmt-rpyc 通过 RPyC 将 Windows QMT/MiniQMT 中的 broker-customized
-`xtquant` SDK 暴露给 Linux、macOS 和 Windows 客户端。
+## 安装与启动
 
-> 当前版本为 `0.3.1`。请先在模拟或只读环境验证，再用于实盘。
-
-## 安装
-
-### 客户端
-
-要求 Python 3.9 或更高版本。
+客户端要求 Python 3.9+；服务端要求 64 位 Python 3.10 或 3.11，并具备券商 xtquant 和 MiniQMT 环境。
 
 ```bash
-pip install qmt-rpyc
+# 源码安装客户端
+scripts/setup.sh
+source .venv/bin/activate
 qmt-rpyc-client init --profile office
 qmt-rpyc-client check --profile office
 ```
 
-Windows 服务端固定版本安装：
-
 ```bat
-py -3.11 -m pip install "qmt-rpyc[server]==0.3.1"
+REM Windows 源码安装服务端
+scripts\setup.bat
+start-rpyc.bat
 ```
 
-后续候选版本发布在 TestPyPI 上，安装时必须以正式 PyPI 作为依赖来源：
+源码脚本创建 `.venv`，安装开发及服务端依赖，并明确使用仓库 `.env`。`start-rpyc.bat` 在源码目录只启动该源码环境。
 
-```bat
-py -3.11 -m pip install --index-url https://pypi.org/simple ^
-  --extra-index-url https://test.pypi.org/simple --pre ^
-  "qmt-rpyc[server]==<版本>"
-```
+Windows 安装包：完整解压含 wheel 的 ZIP，运行 `install-server.bat`，完成初始化和检查后运行 `start-rpyc.bat`。安装器将包安装到 `%LOCALAPPDATA%\qmt-rpyc\venv`；它需要联网安装第三方依赖。后续维护可使用 `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`。
 
-Python SDK：
+安装包服务端默认配置位于 `%LOCALAPPDATA%\qmt-rpyc\config.env`。配置向导可探测 MiniQMT、SDK、账户和本地网络；默认生成认证密钥。客户端 profile 使用系统配置目录，密钥优先放入系统 keyring，也可通过 `QMT_RPYC_AUTH_KEY` 提供。客户端配置优先级为命令行、环境变量、profile、默认值。服务端使用 `--config` 指定的文件或默认配置文件，环境变量覆盖文件值。非交互初始化导入已有 `.env` 时需同时提供 `--non-interactive --yes`。
 
-```python
-from qmt_rpyc import QmtClient
+安装 `.[dev]` 后可用 `python -m build` 构建 wheel/sdist，在两端安装同一个 wheel；该命令不生成 Windows ZIP。ZIP 由发布工作流组装。当前开发版本尚未发布到包索引，不应以 PyPI 上其他版本替代本地构建进行验收。
 
-with QmtClient.connect(
-    "192.168.1.20",
-    port=18812,
-    auth_key="shared-secret-123456",
-) as client:
-    print(client.health())
-    print(client.xtdata.get_instrument_detail("600000.SH"))
-```
+服务端默认使用 `QMT_RPYC_ADAPTER=xtquant_2.0.6.1`，切换与升级流程见[适配版本设计](docs/design/architecture.md#sdk-适配版本选择)。
 
-也可以使用初始化后的 profile：
+## Python 使用
 
 ```python
 from qmt_rpyc import QmtClient
 
 with QmtClient.connect_profile("office") as client:
-    print(client.health())
+    ticks = client.market.get_ticks(["510050.SH"]).require_all()
+    print(ticks["510050.SH"].last_price)
+    dates = client.options.get_expiry_dates("510050.SH")
+    if dates.dates:
+        chain = client.options.get_option_chain("510050.SH", dates.dates[0])
+        details = client.options.get_contract_details(chain.contract_codes[:500])
+        print(details.require_all())
+    print(client.system.get_health())
 ```
 
-### Windows 服务端
+模型从 `qmt_rpyc.contracts.options`、`market`、`trading` 等业务模块导入；异常位于 `qmt_rpyc.contracts.errors`。批量上限 500，每个输入都有对应结果，`require_all()` 在任一失败时抛错。期权发现只覆盖当前尚未到期合约。
 
-要求：
-
-- MiniQMT 已安装、登录并运行。
-- 64 位 Python 3.10 或 3.11，与券商 `xtquant` 扩展匹配。
-- 安装期间能够访问 PyPI。
-
-从 GitHub Release 解压 Windows 安装包后运行：
-
-```bat
-install-server.bat
-```
-
-安装器在 `%LOCALAPPDATA%\qmt-rpyc` 创建专用虚拟环境，然后进入配置
-向导。也可手工安装：
-
-```bat
-py -3.11 -m venv %LOCALAPPDATA%\qmt-rpyc\venv
-%LOCALAPPDATA%\qmt-rpyc\venv\Scripts\pip.exe install "qmt-rpyc[server]"
-%LOCALAPPDATA%\qmt-rpyc\venv\Scripts\qmt-rpyc-server.exe init
-```
-
-日常操作：
-
-```bat
-qmt-rpyc-server check
-qmt-rpyc-server start
-qmt-rpyc-server status
-```
-
-`start` 在前台运行。RPC 独立启动，后台立即尝试连接 MiniQMT 并订阅
-配置账户；失败后依次等待 10 秒、30 秒、1 分钟、10 分钟，此后每
-10 分钟重试，默认不限次数。恢复后继续心跳，再断线从等待 10 秒开始。
-SDK 无法导入、认证配置无效或端口占用等本机启动错误仍会直接失败。
-
-`client.health()` 保留 `connected` 等字段，并提供 `connection_state`
-（`connecting`、`waiting_retry`、`connected` 等）、`consecutive_failures`、
-`last_connection_error` 和 `next_retry_at`。RPC 可连接不表示交易连接可用；
-未连接的交易请求直接报错，不排队或重放。
-
-当前限制（尚未实现，不要按已交付使用）：
-
-- 本地数据完整性判据与断线降级分流未实现，xtdata 转发保持原有行为；
-  数据缺失或范围不完整时不会给出可区分的错误。
-- 下载任务的断线终止规则未接入连接状态检测，`fail_pending` 尚未生效。
-- 10 分钟重试档位，以及运行中断线后的自动恢复，尚未在实际 QMT 上验证。
-
-## 客户端 CLI
-
-API 名称、签名和帮助来自固定 V1 契约；运行时可用性由服务端适配器报告：
+## CLI
 
 ```bash
-qmt-rpyc-client api --profile office list xtdata
-qmt-rpyc-client api --profile office describe trader query_stock_asset
-```
-
-调用只接受 JSON：
-
-```bash
-qmt-rpyc-client call --profile office xtdata get_full_tick \
-  --args '[["600000.SH"]]'
-
-qmt-rpyc-client call --profile office trader query_stock_asset \
-  --args '["YOUR_ACCOUNT_ID"]'
-```
-
-交易方法必须显式确认：
-
-```bash
-qmt-rpyc-client call --profile office trader order_stock \
-  --args '["YOUR_ACCOUNT_ID","600000.SH",23,100,5,10.0]' \
-  --confirm-trading
-```
-
-未知写操作要求 `--confirm-write`。带 `callback` 参数的方法首版不支持
-CLI 调用。
-
-下载和自检：
-
-```bash
-qmt-rpyc-client download --profile office start download_history_data \
-  --args '["600000.SH","1d","20240101","20241231"]'
+qmt-rpyc-client api list
+qmt-rpyc-client api describe market.get_ticks
+qmt-rpyc-client call --profile office market.get_ticks --payload '{"codes":["510050.SH"]}'
+qmt-rpyc-client download --profile office start history --payload '{"code":"510050.SH","period":"1d"}'
 qmt-rpyc-client download --profile office status TASK_ID
+qmt-rpyc-client download --profile office wait TASK_ID
 qmt-rpyc-client self-test --profile office
 ```
 
-## 配置
+`api list` 默认只显示名称和用途；`api describe` 显示参数、默认值、返回模型及字段含义。加 `--json` 输出机器可读说明。
 
-服务端默认配置：
+CLI 交易操作要求 `--confirm-trading`。请求文件使用 `{"operation":"...","payload":{...}}`，通过 `--request` 读取。`api` 根据本地权威契约工作；`check` 报告远端健康和可用性。
 
-```text
-%LOCALAPPDATA%\qmt-rpyc\config.env
-```
+## 原始 SDK 调试
 
-`qmt-rpyc-server init` 会：
-
-- 尝试读取当前目录 `.env`，确认后导入。
-- 探测运行中的 MiniQMT、`userdata_mini`、账户和 `xtquant`。
-- 推荐私有 LAN 地址，不静默绑定所有网卡。
-- 默认生成强认证密钥，也允许用户自定义。
-- 自定义认证密钥没有最短长度限制；短密钥仅用于兼容，仍建议使用默认生成的
-  强密钥。
-- 经确认后在受管 venv 中建立指向券商 `xtquant` 的 junction。
-
-客户端 profile 使用平台标准配置目录。认证密钥默认保存到 Windows
-Credential Manager、macOS Keychain 或 Linux Secret Service。没有可用
-keyring 时，可选择环境变量、每次隐藏输入或明确确认后的配置文件存储。
-
-配置优先级：
-
-```text
-命令行 > 环境变量 > profile > 默认值
-```
-
-## 安全边界
-
-- HMAC 在创建 RPyC Connection 之前完成，未认证连接无法进入
-  RPyC/pickle 协议层。
-- 认证后保留 `rpyc.classic.obtain()`，响应一次性物化为本地对象。
-- 共享密钥持有者对该服务实例拥有完整信任，可以访问全部账户数据和交易
-  API。
-- HMAC 只认证，不加密流量。仅应部署在受信任私有网络；跨公网或不可信
-  网络必须使用 TLS 或 VPN。
-- 防火墙规则只能通过显式的
-  `qmt-rpyc-server firewall add/remove` 管理。
-- 安全问题请按 [SECURITY.md](SECURITY.md) 私密报告。
-
-## 迁移
-
-0.3.0 使用新的专用命名空间，不提供旧包兼容层：
-
-```python
-# 旧
-from client import QmtClient
-
-# 新
-from qmt_rpyc import QmtClient
-```
-
-完整说明见 [MIGRATION.md](MIGRATION.md)。
-
-## 开发与测试
+服务端设置 `QMT_RPYC_DEBUG=1` 并重启后，可使用独立调试入口查看真实签名和直接调用 SDK：
 
 ```bash
-python -m venv .venv
-.venv/bin/python -m pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/ -v -k "not live"
+qmt-rpyc-client debug --profile office describe xtdata.get_option_detail_data
+qmt-rpyc-client debug --profile office call xtdata.get_full_tick --args '[["510050.SH"]]'
 ```
 
-真实 QMT 测试：
+默认关闭、沿用认证、不参与稳定业务契约。参数直接转发，返回 SDK 字段的 JSON 表示，不自动重试。
+Python 使用 `qmt_rpyc.client.debug.DebugClient`；完整限制和示例见[调试接口](docs/api/debug.md)。
 
-```bat
-scripts\test_server.bat
+## 运行与可靠性
+
+RPC 独立启动，QMT 连接在后台重试；维护期间仍可协商和读取健康状态。交易连接未就绪时明确拒绝，不排队重放。SDK 导入失败、认证配置无效或端口占用仍直接导致启动失败。
+
+日期和时刻分别为 `date` 与带时区的 `datetime`，传输时刻统一 UTC。价格和金额保持来源精度；不会补零、自动四舍五入或把无效记录静默丢弃。
+
+下单、撤单及下载创建在结果未知时禁止自动重试。下载完成只表示 SDK 调用正常结束，不保证数据完整或最新。历史数据覆盖、源量纲及维护期间的行为限制见[架构](docs/design/architecture.md#启动安全与验收)。
+
+## 安全
+
+HMAC 在 RPyC 建连前完成认证，业务消息仅使用 JSON，禁用 pickle。共享密钥持有者对服务实例及其账户数据拥有完整信任。HMAC 不加密流量，部署限定在受信任内部网络；不可信网络需要 TLS 或 VPN。每实例共享一个 Trader，不提供多租户隔离。详见 [SECURITY.md](SECURITY.md)。
+
+## 开发验证
+
+```bash
+python -m pip install -e ".[dev]"
+bash scripts/test.sh
+# 全量合成 SDK 测试：使用 Python 3.10/3.11
+python -m pip install -e ".[server,dev]"
+python -m pytest tests/ -v
+python scripts/dump_contract.py
 ```
 
-## 法律声明
+合成 SDK 和本地真实 RPC 测试可跨平台运行。实际部署只读验收需配置客户端 profile，并设置 `QMT_RPYC_LIVE=1` 后运行 `tests/test_live_integration.py`。升级 SDK 或适配器时需重新执行部署验收。
 
-本项目不包含、不分发 `xtquant`、QMT 或 MiniQMT。相关软件、商标、数据和
-许可归其权利方所有。本项目不提供投资建议；实盘交易和部署风险由使用者
-自行承担。
-
-本项目采用 [MIT License](LICENSE)。
+本项目不分发 xtquant、QMT 或 MiniQMT，不提供投资建议。许可证为 [MIT](LICENSE)。

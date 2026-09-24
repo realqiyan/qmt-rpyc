@@ -1,17 +1,13 @@
-"""qmt-rpyc client command-line interface."""
-
-import contextlib
+"""CLI for the fixed, typed operation contract."""
+import argparse
 import getpass
 import json
 import os
 import sys
 
 from qmt_rpyc import QmtClient
-from qmt_rpyc.cli.common import (
-    ArgumentParser,
-    add_version_argument,
-    emit_interrupted,
-)
+from qmt_rpyc.cli.common import ArgumentParser, add_version_argument, emit_interrupted
+from qmt_rpyc.client.debug import DebugClient, DebugError
 from qmt_rpyc.config import (
     DEFAULT_PROFILE,
     delete_profile,
@@ -19,9 +15,11 @@ from qmt_rpyc.config import (
     probe_keyring,
     save_profile,
 )
-from qmt_rpyc.exceptions import QmtError
-from qmt_rpyc.proxy import DownloadTaskHandle
-
+from qmt_rpyc.contracts.downloads import TaskRef
+from qmt_rpyc.contracts.errors import ProtocolError, QmtAuthError, QmtError
+from qmt_rpyc.contracts.operations import OPERATIONS
+from qmt_rpyc.cli.api_help import describe_api, list_apis, render_description, render_list
+from qmt_rpyc.transport.codec import decode, encode
 
 EXIT_USAGE = 2
 EXIT_CONFIRMATION = 3
@@ -30,16 +28,7 @@ EXIT_REMOTE = 5
 
 
 def _emit(value, compact=False, stream=None):
-    stream = stream or sys.stdout
-    kwargs = {
-        "ensure_ascii": False,
-        "default": str,
-    }
-    if compact:
-        kwargs["separators"] = (",", ":")
-    else:
-        kwargs["indent"] = 2
-    print(json.dumps(value, **kwargs), file=stream)
+    print(json.dumps(encode(value), ensure_ascii=False, indent=None if compact else 2), file=stream or sys.stdout)
 
 
 def _connect(args):
@@ -49,55 +38,6 @@ def _connect(args):
         "timeout": getattr(args, "timeout", None),
     }
     return QmtClient.connect_profile(args.profile, **overrides)
-
-
-def _surface_descriptor(client, surface):
-    if surface == "xtdata":
-        return client._surface.get("xtdata", {}).get("functions", {})
-    if surface == "trader":
-        return client._surface.get("XtQuantTrader", {}).get("methods", {})
-    if surface == "constants":
-        return client._surface.get("xtconstant", {}).get("constants", {})
-    raise ValueError("unknown API surface: {}".format(surface))
-
-
-def _risk(surface, name, meta):
-    signature = meta.get("signature", "") if isinstance(meta, dict) else ""
-    if "callback" in signature:
-        return "unsupported-callback"
-    if surface == "trader":
-        return "read" if name.startswith("query_") else "trading"
-    if name.startswith("download_"):
-        return "download"
-    read_prefixes = (
-        "get_", "query_", "is_", "list_", "get", "query", "list",
-    )
-    if name.startswith(read_prefixes):
-        return "read"
-    return "write"
-
-
-def _read_request(args):
-    if args.request:
-        if args.request == "-":
-            payload = json.load(sys.stdin)
-        else:
-            with open(args.request, "r", encoding="utf-8") as fp:
-                payload = json.load(fp)
-        if not isinstance(payload, dict):
-            raise ValueError("request JSON must be an object")
-        return (
-            payload.get("surface"),
-            payload.get("name"),
-            payload.get("args", []),
-            payload.get("kwargs", {}),
-        )
-    return (
-        args.surface,
-        args.name,
-        json.loads(args.args),
-        json.loads(args.kwargs),
-    )
 
 
 def _cmd_init(args):
@@ -171,7 +111,7 @@ def _cmd_init(args):
         "secret_store": "config" if store_plaintext else "keyring",
         "next_steps": [
             "qmt-rpyc-client check --profile {}".format(profile),
-            "qmt-rpyc-client api --profile {} list xtdata".format(profile),
+            "qmt-rpyc-client api --profile {} list market".format(profile),
         ],
     }, args.compact)
 
@@ -204,150 +144,6 @@ def _cmd_profile(args):
         _emit({"status": "deleted", "profile": args.name}, args.compact)
 
 
-def _cmd_check(args):
-    with _connect(args) as client:
-        health = client.health()
-        result = {
-            "status": "ok" if health.get("connected") else "degraded",
-            "profile": args.profile,
-            "package_version": client._surface.get("package_version"),
-            "protocol_version": client._surface.get("protocol_version"),
-            "schema_version": client._surface.get("schema_version"),
-            "contract_version": client._surface.get("contract_version"),
-            "capabilities": client._surface.get("capabilities", {}),
-            "health": health,
-            "api_counts": {
-                "xtdata": len(_surface_descriptor(client, "xtdata")),
-                "trader": len(_surface_descriptor(client, "trader")),
-                "constants": len(_surface_descriptor(client, "constants")),
-            },
-        }
-        _emit(result, args.compact)
-        return 0 if health.get("connected") else EXIT_CONNECTION
-
-
-def _cmd_api(args):
-    with _connect(args) as client:
-        descriptor = _surface_descriptor(client, args.surface)
-        if args.api_command == "list":
-            if args.surface == "constants":
-                result = descriptor
-            else:
-                result = [
-                    {
-                        "name": name,
-                        "signature": meta.get("signature", ""),
-                        "risk": _risk(args.surface, name, meta),
-                    }
-                    for name, meta in sorted(descriptor.items())
-                ]
-            _emit(result, args.compact)
-            return
-        if args.name not in descriptor:
-            raise KeyError(
-                "{} API {!r} does not exist".format(
-                    args.surface, args.name
-                )
-            )
-        meta = descriptor[args.name]
-        result = {
-            "surface": args.surface,
-            "name": args.name,
-            "metadata": meta,
-            "risk": _risk(args.surface, args.name, meta),
-        }
-        _emit(result, args.compact)
-
-
-def _execute_call(client, surface, name, call_args, kwargs, args):
-    descriptor = _surface_descriptor(client, surface)
-    if name not in descriptor:
-        raise KeyError(
-            "{} API {!r} does not exist".format(surface, name)
-        )
-    meta = descriptor[name]
-    risk = _risk(surface, name, meta)
-    if risk == "unsupported-callback":
-        raise ValueError(
-            "{}.{} requires a callback and is not supported by the CLI".format(
-                surface, name
-            )
-        )
-    if risk == "download" and not getattr(args, "download_mode", False):
-        raise ValueError("download_* functions require 'download start'")
-    if risk == "trading" and not args.confirm_trading:
-        _emit({
-            "status": "confirmation_required",
-            "risk": risk,
-            "surface": surface,
-            "name": name,
-            "args": call_args,
-            "kwargs": kwargs,
-        }, args.compact, sys.stderr)
-        return EXIT_CONFIRMATION
-    if risk == "write" and not args.confirm_write:
-        _emit({
-            "status": "confirmation_required",
-            "risk": risk,
-            "surface": surface,
-            "name": name,
-            "args": call_args,
-            "kwargs": kwargs,
-        }, args.compact, sys.stderr)
-        return EXIT_CONFIRMATION
-
-    target = client.xtdata if surface == "xtdata" else client.trader
-    result = getattr(target, name)(*call_args, **kwargs)
-    if isinstance(result, DownloadTaskHandle):
-        result = {"task_id": result.task_id, "status": "started"}
-    _emit(result, args.compact)
-    return 0
-
-
-def _cmd_call(args):
-    surface, name, call_args, kwargs = _read_request(args)
-    if surface not in ("xtdata", "trader"):
-        raise ValueError("surface must be 'xtdata' or 'trader'")
-    if not isinstance(call_args, list) or not isinstance(kwargs, dict):
-        raise ValueError("args must be a JSON array and kwargs a JSON object")
-    with _connect(args) as client:
-        return _execute_call(
-            client, surface, name, call_args, kwargs, args
-        )
-
-
-def _cmd_download(args):
-    with _connect(args) as client:
-        if args.download_command == "start":
-            call_args = json.loads(args.args)
-            kwargs = json.loads(args.kwargs)
-            if not isinstance(call_args, list) or not isinstance(kwargs, dict):
-                raise ValueError(
-                    "args must be a JSON array and kwargs a JSON object"
-                )
-            args.download_mode = True
-            return _execute_call(
-                client, "xtdata", args.name, call_args, kwargs, args
-            )
-        if args.download_command == "status":
-            _emit(client.query_download(args.task_id), args.compact)
-            return 0
-        handle = client.download_handle(args.task_id)
-        _emit(
-            handle.wait(timeout=args.wait_timeout, poll_interval=args.interval),
-            args.compact,
-        )
-        return 0
-
-
-def _cmd_self_test(args):
-    with _connect(args) as client:
-        with contextlib.redirect_stdout(sys.stderr):
-            result = client.self_test(timeout=args.test_timeout)
-        _emit(result, args.compact)
-        return 0 if not result.get("failed") else EXIT_REMOTE
-
-
 def _add_connection_options(parser):
     parser.add_argument(
         "--profile",
@@ -375,325 +171,172 @@ def _add_connection_options(parser):
     )
 
 
+def _cmd_check(args):
+    with _connect(args) as client:
+        health = client.system.get_health()
+        _emit(dict(status='ok' if health.connected else 'degraded', profile=args.profile,
+                   health=health, capabilities=client.capabilities()), args.compact)
+        return 0 if health.connected else EXIT_CONNECTION
+
+
+def _cmd_api(args):
+    if args.api_command == 'list':
+        result = list_apis(args.group)
+        render = render_list
+    else:
+        result = describe_api(args.operation)
+        render = render_description
+    if args.json or args.compact:
+        _emit(result, args.compact)
+    else:
+        print(render(result))
+
+
+def _read_request(args):
+    if args.request:
+        if args.request == '-':
+            value = json.load(sys.stdin)
+        else:
+            with open(args.request, encoding='utf-8') as stream:
+                value = json.load(stream)
+        if type(value) is not dict or set(value) != {'operation', 'payload'}:
+            raise ValueError('request must contain operation and payload')
+        return value['operation'], value['payload']
+    return args.operation, json.loads(args.payload)
+
+
+def _execute(args, operation, payload):
+    if type(operation) is not str or operation not in OPERATIONS:
+        raise ValueError('unknown operation')
+    spec = OPERATIONS[operation]
+    request = decode(spec.request_type, payload)
+    if spec.mutation and operation.startswith('trading.') and not args.confirm_trading:
+        _emit(dict(status='confirmation_required', operation=operation), args.compact, sys.stderr)
+        return EXIT_CONFIRMATION
+    with _connect(args) as client:
+        _emit(client._invoke(operation, request), args.compact)
+    return 0
+
+
+def _cmd_call(args):
+    return _execute(args, *_read_request(args))
+
+
+def _cmd_download(args):
+    if args.download_command == 'start':
+        return _execute(args, 'downloads.start_' + args.kind, json.loads(args.payload))
+    with _connect(args) as client:
+        status = client.downloads.get_task(args.task_id)
+        if args.download_command == 'wait':
+            status = client.downloads.handle(TaskRef(status.task_id, status.kind)).wait(args.wait_timeout, args.interval)
+        _emit(status, args.compact)
+        return EXIT_REMOTE if status.status == 'failed' else 0
+
+
+def _cmd_self_test(args):
+    with _connect(args) as client:
+        result = client.self_test()
+        _emit(result, args.compact)
+        return EXIT_REMOTE if result['failed'] else 0
+
+
+def _cmd_debug(args):
+    if (args.debug_command == 'call' and args.target.startswith('trader.')
+            and not args.target.split('.', 1)[1].startswith('query_') and not args.confirm_trading):
+        _emit(dict(status='confirmation_required', target=args.target), args.compact, sys.stderr)
+        return EXIT_CONFIRMATION
+    try:
+        with DebugClient.connect_profile(args.profile, host=args.host, port=args.port, timeout=args.timeout) as client:
+            if args.debug_command == 'describe':
+                result = client.describe(args.target)
+            else:
+                result = client.call(args.target, json.loads(args.args), json.loads(args.kwargs))
+            _emit(result, args.compact)
+            return 0
+    except DebugError as exc:
+        _emit(dict(status='error', error=exc.error), args.compact, sys.stderr)
+        return EXIT_REMOTE
+
+
 def build_parser():
-    parser = ArgumentParser(
-        prog="qmt-rpyc-client",
-        description=(
-            "Connect to a qmt-rpyc server, inspect its discovered xtquant "
-            "API, and invoke APIs from the command line."
-        ),
-        epilog="""Getting started:
-  qmt-rpyc-client init --profile office
-  qmt-rpyc-client check --profile office
-  qmt-rpyc-client api --profile office list xtdata
-
-Run 'qmt-rpyc-client COMMAND --help' for command-specific examples.""",
-    )
+    parser = ArgumentParser(prog='qmt-rpyc-client', description='Inspect and invoke the typed QMT operation contract.')
     add_version_argument(parser)
-    sub = parser.add_subparsers(
-        dest="command",
-        required=True,
-        title="commands",
-        metavar="COMMAND",
-    )
-
-    init = sub.add_parser(
-        "init",
-        help="create or update a client connection profile",
-        description=(
-            "Create or update a named connection profile. The authentication "
-            "key is read from QMT_RPYC_AUTH_KEY in non-interactive mode; "
-            "otherwise it is requested without echo."
-        ),
-        epilog="""Examples:
-  qmt-rpyc-client init --profile office
-  qmt-rpyc-client init --profile office --host 192.168.1.20 --port 18812
-  qmt-rpyc-client init --profile ci --non-interactive --store-plaintext""",
-    )
+    sub = parser.add_subparsers(dest='command', required=True)
+    init = sub.add_parser('init', help='save a connection profile')
     _add_connection_options(init)
-    init.add_argument("--ca-certs", help="CA certificate bundle for TLS")
-    init.add_argument("--certfile", help="client certificate for mTLS")
-    init.add_argument("--keyfile", help="client private key for mTLS")
-    init.add_argument(
-        "--store-plaintext",
-        action="store_true",
-        help="store the authentication key in the protected profile file",
-    )
-    init.add_argument(
-        "--non-interactive",
-        action="store_true",
-        help="do not prompt; fail when required values are unavailable",
-    )
+    for flag in ('ca-certs', 'certfile', 'keyfile'):
+        init.add_argument('--' + flag)
+    for flag in ('store-plaintext', 'non-interactive'):
+        init.add_argument('--' + flag, action='store_true')
     init.set_defaults(func=_cmd_init)
-
-    profile = sub.add_parser(
-        "profile",
-        help="list, inspect, or delete client profiles",
-        description=(
-            "Manage saved client profiles. Authentication keys are never "
-            "shown by the 'show' command."
-        ),
-        epilog="""Examples:
-  qmt-rpyc-client profile list
-  qmt-rpyc-client profile show office
-  qmt-rpyc-client profile delete office""",
-    )
-    profile.add_argument(
-        "--compact",
-        action="store_true",
-        help="emit compact single-line JSON",
-    )
-    profile_sub = profile.add_subparsers(
-        dest="profile_command",
-        required=True,
-        title="profile commands",
-        metavar="COMMAND",
-    )
-    profile_sub.add_parser(
-        "list",
-        help="list saved profile names",
-        description="List all configured client profile names.",
-    )
-    show = profile_sub.add_parser(
-        "show",
-        help="show a profile without revealing its key",
-        description="Show the non-secret settings for one client profile.",
-    )
-    show.add_argument("name", help="profile name")
-    delete = profile_sub.add_parser(
-        "delete",
-        help="delete a profile and its stored credential",
-        description="Delete a profile and its associated keyring credential.",
-    )
-    delete.add_argument("name", help="profile name")
-    delete.add_argument(
-        "--yes",
-        action="store_true",
-        help="delete without asking for confirmation",
-    )
+    profile = sub.add_parser('profile', help='manage saved profiles')
+    profile.add_argument('--compact', action='store_true')
+    profiles = profile.add_subparsers(dest='profile_command', required=True)
+    profiles.add_parser('list')
+    show = profiles.add_parser('show'); show.add_argument('name')
+    delete = profiles.add_parser('delete'); delete.add_argument('name'); delete.add_argument('--yes', action='store_true')
     profile.set_defaults(func=_cmd_profile)
-
-    check = sub.add_parser(
-        "check",
-        help="verify authentication, connectivity, and server health",
-        description=(
-            "Connect to the selected server and report protocol versions, "
-            "health, and discovered API counts."
-        ),
-        epilog="""Example:
-  qmt-rpyc-client check --profile office""",
-    )
-    _add_connection_options(check)
-    check.set_defaults(func=_cmd_check)
-
-    api = sub.add_parser(
-        "api",
-        help="inspect APIs discovered from the deployed xtquant SDK",
-        description=(
-            "List or describe the API surface reported by the remote server. "
-            "The deployed broker SDK is the source of truth."
-        ),
-        epilog="""Examples:
-  qmt-rpyc-client api --profile office list xtdata
-  qmt-rpyc-client api --profile office describe trader query_stock_asset""",
-    )
+    for command, handler in [('check', _cmd_check), ('self-test', _cmd_self_test)]:
+        child = sub.add_parser(command)
+        _add_connection_options(child)
+        child.set_defaults(func=handler)
+    api = sub.add_parser('api', help='inspect local contract definitions without connecting')
     _add_connection_options(api)
-    api_sub = api.add_subparsers(
-        dest="api_command",
-        required=True,
-        title="API commands",
-        metavar="COMMAND",
-    )
-    api_list = api_sub.add_parser(
-        "list",
-        help="list functions, methods, or constants",
-        description="List one discovered API surface.",
-    )
-    api_list.add_argument(
-        "surface",
-        choices=("xtdata", "trader", "constants"),
-        help="API surface to list",
-    )
-    describe = api_sub.add_parser(
-        "describe",
-        help="show metadata and risk classification for one API",
-        description="Describe one discovered xtdata function or trader method.",
-    )
-    describe.add_argument(
-        "surface",
-        choices=("xtdata", "trader"),
-        help="API surface containing the name",
-    )
-    describe.add_argument("name", help="function or method name")
+    api.add_argument('--json', action='store_true', help='emit documented JSON instead of readable text')
+    apis = api.add_subparsers(dest='api_command', required=True)
+    listing = apis.add_parser('list'); listing.add_argument('group', nargs='?')
+    describe = apis.add_parser('describe'); describe.add_argument('operation')
+    for child in (listing, describe):
+        child.add_argument('--json', action='store_true', default=argparse.SUPPRESS, help='emit documented JSON')
+        child.add_argument('--compact', action='store_true', default=argparse.SUPPRESS, help='emit compact JSON')
     api.set_defaults(func=_cmd_api)
-
-    call = sub.add_parser(
-        "call",
-        help="invoke one discovered xtdata or trader API",
-        description=(
-            "Invoke an API with JSON arguments. Trading and unknown write "
-            "operations require explicit confirmation flags."
-        ),
-        epilog="""Examples:
-  qmt-rpyc-client call --profile office xtdata get_full_tick \\
-    --args '[["600000.SH"]]'
-  qmt-rpyc-client call --profile office trader query_stock_asset \\
-    --args '["ACCOUNT_ID"]'
-  qmt-rpyc-client call --profile office --request request.json
-
-Request files contain: {"surface":"xtdata","name":"get_full_tick",
-                        "args":[["600000.SH"]],"kwargs":{}}""",
-    )
+    call = sub.add_parser('call', help='invoke an operation with a typed JSON payload')
     _add_connection_options(call)
-    call.add_argument(
-        "surface",
-        nargs="?",
-        choices=("xtdata", "trader"),
-        help="API surface; omit when using --request",
-    )
-    call.add_argument(
-        "name",
-        nargs="?",
-        help="function or method name; omit when using --request",
-    )
-    call.add_argument("--args", default="[]", help="JSON positional arguments")
-    call.add_argument("--kwargs", default="{}", help="JSON keyword arguments")
-    call.add_argument(
-        "--request",
-        help="read a complete request object from a JSON file, or '-' for stdin",
-    )
-    call.add_argument(
-        "--confirm-trading",
-        action="store_true",
-        help="confirm execution of a trader write method",
-    )
-    call.add_argument(
-        "--confirm-write",
-        action="store_true",
-        help="confirm an xtdata operation classified as a write",
-    )
+    call.add_argument('operation', nargs='?')
+    call.add_argument('--payload', default='{}')
+    call.add_argument('--request', help='JSON file with operation and payload; - reads stdin')
+    call.add_argument('--confirm-trading', action='store_true')
     call.set_defaults(func=_cmd_call)
-
-    download = sub.add_parser(
-        "download",
-        help="start, inspect, or wait for asynchronous downloads",
-        description=(
-            "Manage asynchronous xtdata download_* calls. 'start' returns a "
-            "task ID used by 'status' and 'wait'."
-        ),
-        epilog="""Examples:
-  qmt-rpyc-client download --profile office start download_history_data \\
-    --args '["600000.SH","1d","20240101","20241231"]'
-  qmt-rpyc-client download --profile office status TASK_ID
-  qmt-rpyc-client download --profile office wait TASK_ID""",
-    )
+    download = sub.add_parser('download', help='start, inspect or wait for a download')
     _add_connection_options(download)
-    download.add_argument(
-        "--confirm-trading",
-        action="store_true",
-        help="reserved confirmation flag for consistent call handling",
-    )
-    download.add_argument(
-        "--confirm-write",
-        action="store_true",
-        help="confirm starting a download classified as a write",
-    )
-    download_sub = download.add_subparsers(
-        dest="download_command",
-        required=True,
-        title="download commands",
-        metavar="COMMAND",
-    )
-    start = download_sub.add_parser(
-        "start",
-        help="start a discovered download_* function",
-        description="Start an asynchronous xtdata download and return its ID.",
-    )
-    start.add_argument("name", help="download_* function name")
-    start.add_argument("--args", default="[]", help="JSON positional arguments")
-    start.add_argument("--kwargs", default="{}", help="JSON keyword arguments")
-    status = download_sub.add_parser(
-        "status",
-        help="query a download task once",
-        description="Return the current state of a download task.",
-    )
-    status.add_argument("task_id", help="download task ID")
-    wait = download_sub.add_parser(
-        "wait",
-        help="wait until a download finishes or times out",
-        description="Poll a download task until it reaches a terminal state.",
-    )
-    wait.add_argument("task_id", help="download task ID")
-    wait.add_argument(
-        "--wait-timeout",
-        type=float,
-        default=300,
-        help="maximum wait time in seconds (default: %(default)s)",
-    )
-    wait.add_argument(
-        "--interval",
-        type=float,
-        default=0.5,
-        help="poll interval in seconds (default: %(default)s)",
-    )
-    download.set_defaults(func=_cmd_download)
-
-    self_test = sub.add_parser(
-        "self-test",
-        help="run the client read-only API self-test",
-        description=(
-            "Exercise supported read-only interfaces and report passed, "
-            "failed, and skipped checks. No trading calls are made."
-        ),
-        epilog="""Example:
-  qmt-rpyc-client self-test --profile office --test-timeout 30""",
-    )
-    _add_connection_options(self_test)
-    self_test.add_argument(
-        "--test-timeout",
-        type=float,
-        default=30,
-        help="timeout in seconds for each self-test call (default: %(default)s)",
-    )
-    self_test.set_defaults(func=_cmd_self_test)
-
+    commands = download.add_subparsers(dest='download_command', required=True)
+    start = commands.add_parser('start')
+    start.add_argument('kind', choices=('history', 'financials', 'sectors', 'index_weights'))
+    start.add_argument('--payload', default='{}')
+    status = commands.add_parser('status'); status.add_argument('task_id')
+    wait = commands.add_parser('wait'); wait.add_argument('task_id')
+    wait.add_argument('--wait-timeout', type=float, default=300)
+    wait.add_argument('--interval', type=float, default=.5)
+    download.set_defaults(func=_cmd_download, confirm_trading=False)
+    debug = sub.add_parser('debug', help='inspect or call the raw SDK (server opt-in required)')
+    _add_connection_options(debug)
+    debug_sub = debug.add_subparsers(dest='debug_command', required=True)
+    describe = debug_sub.add_parser('describe', help='inspect deployed signatures or constants')
+    describe.add_argument('target', nargs='?', help='omit to inspect all SDK surfaces')
+    raw = debug_sub.add_parser('call', help='forward an SDK call once, without contract projection')
+    raw.add_argument('target', help='xtdata.NAME or trader.NAME')
+    raw.add_argument('--args', default='[]', help='JSON positional arguments')
+    raw.add_argument('--kwargs', default='{}', help='JSON keyword arguments')
+    raw.add_argument('--confirm-trading', action='store_true')
+    debug.set_defaults(func=_cmd_debug)
     return parser
 
 
 def main(argv=None):
-    parser = build_parser()
-    args = parser.parse_args(argv)
     try:
+        args = build_parser().parse_args(argv)
         return args.func(args) or 0
     except KeyboardInterrupt:
-        return emit_interrupted(
-            _emit, getattr(args, "compact", False)
-        )
-    except (ValueError, KeyError, json.JSONDecodeError) as e:
-        _emit(
-            {"status": "error", "error_type": type(e).__name__,
-             "error_message": str(e)},
-            getattr(args, "compact", False),
-            sys.stderr,
-        )
-        return EXIT_USAGE
-    except QmtError as e:
-        _emit(
-            {"status": "error", "error_type": type(e).__name__,
-             "error_message": str(e)},
-            getattr(args, "compact", False),
-            sys.stderr,
-        )
+        return emit_interrupted()
+    except (QmtError, ProtocolError) as exc:
+        value = dict(status='error', message=str(exc))
+        if isinstance(exc, QmtError):
+            value['error'] = exc.error
+        _emit(value, stream=sys.stderr)
         return EXIT_REMOTE
-    except Exception as e:
-        _emit(
-            {"status": "error", "error_type": type(e).__name__,
-             "error_message": str(e)},
-            getattr(args, "compact", False),
-            sys.stderr,
-        )
+    except (OSError, QmtAuthError) as exc:
+        _emit(dict(status='error', message=str(exc)), stream=sys.stderr)
         return EXIT_CONNECTION
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    except (ValueError, KeyError, RuntimeError) as exc:
+        _emit(dict(status='error', message=str(exc)), stream=sys.stderr)
+        return EXIT_USAGE

@@ -24,7 +24,6 @@ from qmt_rpyc.server.environment import (
     wire_xtquant,
 )
 
-
 FIREWALL_RULE = "qmt-rpyc server"
 
 
@@ -75,10 +74,14 @@ def _read_env(path):
 def _write_env(path, values):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER
     ordered = [
         ("QMT_RPYC_HOST", values.get("QMT_RPYC_HOST", "127.0.0.1")),
         ("QMT_RPYC_PORT", values.get("QMT_RPYC_PORT", "18812")),
         ("QMT_RPYC_AUTH_KEY", values.get("QMT_RPYC_AUTH_KEY", "")),
+        ("QMT_RPYC_ADAPTER", values.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)),
+        ("QMT_RPYC_DEBUG", values.get("QMT_RPYC_DEBUG", "0")),
+        ("QMT_RPYC_ALLOW_INSECURE", values.get("QMT_RPYC_ALLOW_INSECURE", "0")),
         ("QMT_PATH", values.get("QMT_PATH", "")),
         ("QMT_SESSION_ID", values.get("QMT_SESSION_ID", "1")),
         ("QMT_ACCOUNT_ID", values.get("QMT_ACCOUNT_ID", "")),
@@ -152,6 +155,8 @@ def _cmd_init(args):
             source = current
     imported = _read_env(source) if source and source.exists() else {}
     if imported:
+        if args.non_interactive and not args.yes:
+            raise ValueError("Importing an existing .env non-interactively requires --yes")
         _emit({"import_candidate": str(source),
                "summary": _masked_summary(imported)}, args.compact)
         if not _confirm(
@@ -189,7 +194,7 @@ def _cmd_init(args):
     existing_key = values.get("QMT_RPYC_AUTH_KEY")
     auth_key = os.environ.get("QMT_RPYC_AUTH_KEY") or existing_key
     generated = False
-    if not auth_key:
+    if not auth_key or not auth_key.strip() or auth_key == "your-secret-key-here":
         candidate = secrets.token_urlsafe(32)
         if args.non_interactive:
             auth_key = candidate
@@ -276,7 +281,12 @@ def _cmd_init(args):
 
 
 def _validate_values(values):
+    from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
     errors = []
+    try:
+        select_adapter(os.environ.get("QMT_RPYC_ADAPTER", values.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)))
+    except ValueError as exc:
+        errors.append(str(exc))
     auth_key = values.get("QMT_RPYC_AUTH_KEY", "")
     if (
         not isinstance(auth_key, str)
@@ -328,7 +338,9 @@ def _cmd_check(args):
     connected = False
     if not errors and xtquant_ok:
         try:
-            from qmt_rpyc.server.connection import ConnectionManager
+            from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
+            adapter = select_adapter(os.environ.get("QMT_RPYC_ADAPTER", values.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)))
+            ConnectionManager = adapter.connection_type()
             manager = ConnectionManager(
                 path=values.get("QMT_PATH", ""),
                 session_id=int(values.get("QMT_SESSION_ID", "1")),
@@ -404,7 +416,8 @@ def _client_from_server_config(path):
 
 def _cmd_status(args):
     with _client_from_server_config(config_path(args.config)) as client:
-        _emit(client.health(), args.compact)
+        from qmt_rpyc.transport.codec import encode
+        _emit(encode(client.system.get_health()), args.compact)
     return 0
 
 
@@ -516,8 +529,10 @@ def _cmd_xtquant(args):
 
 
 def _cmd_api_dump(args):
-    from qmt_rpyc.server.api_surface import build_api_surface
-    surface = build_api_surface()
+    from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
+    values = _read_env(config_path(args.config))
+    adapter = select_adapter(os.environ.get("QMT_RPYC_ADAPTER", values.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)))
+    surface = adapter.discover()
     if args.without_docs:
         for section, key in (
             ("xtdata", "functions"),
@@ -618,7 +633,7 @@ Global options must appear before COMMAND. Run
     init.add_argument(
         "--non-interactive",
         action="store_true",
-        help="do not prompt; use arguments, detected values, and defaults",
+        help="do not prompt; importing an existing .env also requires --yes",
     )
     init.set_defaults(func=_cmd_init)
 

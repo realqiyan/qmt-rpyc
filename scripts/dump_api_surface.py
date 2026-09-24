@@ -18,9 +18,6 @@ _SOURCE_ROOT = _PROJECT_ROOT / "src"
 if str(_SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(_SOURCE_ROOT))
 
-# This must be imported before xtquant on Python versions that need the patch.
-import qmt_rpyc.server.datetime_patch  # noqa: E402, F401
-
 
 def _get_xtquant_version():
     import xtquant
@@ -40,9 +37,10 @@ def _remove_docs(surface):
 
 
 def build_dump(include_docs=True):
-    from qmt_rpyc.server.api_surface import build_api_surface
+    import os
+    from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
 
-    surface = build_api_surface()
+    surface = select_adapter(os.environ.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)).discover()
     if not include_docs:
         _remove_docs(surface)
 

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0.dev2] - Unreleased
+
+- Remove the unsupported global datetime replacement and its diagnostic-script import; retain standard datetime identities for the strict codec and test timestamp boundaries and import order.
+
+- Make API list/describe readable by default, with complete field documentation and explicit JSON output. Documentation does not alter the contract hash.
+- Version the broker adapter as xtquant_2.0.6.1 (Python package xtquant_2_0_6_1); add explicit server-side selection for startup, checks, discovery and debugging.
+- Preserve adapter/debug settings when the Windows initialization wizard rewrites configuration.
+
+## [0.5.0.dev1] - Unreleased
+
+- Add an opt-in authenticated raw SDK debug client/CLI for deployed signatures, constants and direct calls, independent of business contract negotiation.
+
+- Provide 28 fixed operations with typed requests, immutable results, strict JSON encoding and contract negotiation.
+- Separate domain contracts, client, transport, server services and typed SDK providers. Public imports are independent of protocol version numbers.
+- Cover current option discovery, instrument/reference data, ticks/bars, financials, downloads and synchronous trading, preserving consumer field dependencies.
+- Keep bounded batch isolation and execution uncertainty; never replay a mutation with an unknown outcome.
+- Align CLI, documentation, tests and both consuming applications with the current API.
+
 ## [0.4.0.dev2] - Unreleased
 
 - Print the server package version in the startup log and console summary.

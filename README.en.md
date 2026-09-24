@@ -1,105 +1,92 @@
 # qmt-rpyc
 
-This worktree is **0.4.0.dev2 (unreleased)** and introduces the fixed V1 contract. Server, client and consumers need one coordinated upgrade. PyPI commands below refer to released packages; see the [implementation and local-wheel validation guide](docs/design/contract-v1-implementation.md) for this development build.
+A typed Python bridge to a broker-customized QMT/MiniQMT deployment. The server runs on Windows with Python 3.10/3.11; clients support Python 3.9+ on Linux, macOS and Windows.
 
-[中文](README.md)
+Current source version: **0.5.0.dev2, unreleased**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
 
-qmt-rpyc exposes the broker-customized `xtquant` SDK running beside
-QMT/MiniQMT on Windows to clients on Linux, macOS, and Windows.
-
-## Install
-
-Client:
-
-Python 3.9 or newer is required.
+## Install from source
 
 ```bash
-pip install qmt-rpyc
+scripts/setup.sh
+source .venv/bin/activate
 qmt-rpyc-client init --profile office
 qmt-rpyc-client check --profile office
 ```
 
-To pin the Windows server version:
-
-```bash
-python -m pip install "qmt-rpyc[server]==0.3.1"
-```
-
-Release candidates are published to TestPyPI and must resolve dependencies
-from PyPI:
-
-```bash
-python -m pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple --pre \
-  "qmt-rpyc[server]==<version>"
-```
-
-Server, on Windows with Python 3.10 or 3.11:
+On Windows, with 64-bit Python 3.10/3.11 and the broker SDK installed:
 
 ```bat
-pip install "qmt-rpyc[server]"
-qmt-rpyc-server init
-qmt-rpyc-server check
-qmt-rpyc-server start
+scripts\setup.bat
+start-rpyc.bat
 ```
 
-The RPC server starts independently of the trading connection. Its first
-background connection attempt runs immediately; failures wait 10 seconds,
-30 seconds, 1 minute, then 10 minutes between subsequent attempts. Retries
-are unlimited by default. Recovery resumes heartbeats and resets the retry
-schedule. Invalid local configuration, SDK import failures, and occupied
-ports still fail startup.
+Source scripts create `.venv`, install server/development dependencies and explicitly use the checkout `.env`. In a source checkout, `start-rpyc.bat` always uses that environment.
 
-`client.health()` preserves existing fields and adds `connection_state`,
-`consecutive_failures`, `last_connection_error`, and `next_retry_at`.
-An available RPC connection does not imply trading readiness. Disconnected
-trading requests fail without queuing or replay.
+For a Windows ZIP bundle, extract all files, run `install-server.bat`, then `start-rpyc.bat`. The installer uses the bundled wheel, downloads third-party dependencies, and installs into `%LOCALAPPDATA%\qmt-rpyc\venv`. For maintenance, use `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`.
 
-Current limitations, not yet implemented:
+The managed server configuration lives in `%LOCALAPPDATA%\qmt-rpyc\config.env`. Client profiles use the platform configuration directory; credentials use the system keyring or `QMT_RPYC_AUTH_KEY`.
 
-- Local-query completeness checks and degraded fallback are not implemented;
-  xtdata forwarding keeps its previous behavior and an incomplete range is
-  not reported as a distinguishable error.
-- Download termination on disconnect is not wired to connection state, so
-  `fail_pending` has no effect yet.
-- The 10-minute retry tier and recovery from a disconnect during a running
-  session have not been verified against real QMT.
+Server environment variables override the selected configuration file (`--config PATH` or the default). Importing an existing `.env` without prompts requires `init --non-interactive --yes`.
 
-Python:
+With `.[dev]` installed, `python -m build` creates a wheel/sdist; the release workflow separately assembles the Windows ZIP. This development version is not published to a package index.
+
+The default server adapter is `QMT_RPYC_ADAPTER=xtquant_2.0.6.1`, implemented in the valid Python package `adapters/xtquant_2_0_6_1`. Selection is explicit and requires a restart; it does not install or switch the broker SDK.
+
+## Python and CLI
 
 ```python
 from qmt_rpyc import QmtClient
 
 with QmtClient.connect_profile("office") as client:
-    print(client.health())
-    print(client.xtdata.get_instrument_detail("600000.SH"))
+    ticks = client.market.get_ticks(["510050.SH"]).require_all()
+    print(ticks["510050.SH"].last_price)
+    print(client.options.get_expiry_dates("510050.SH"))
+    print(client.system.get_health())
 ```
-
-Dynamic CLI calls accept JSON only:
 
 ```bash
-qmt-rpyc-client api --profile office list xtdata
-qmt-rpyc-client call --profile office xtdata get_full_tick \
-  --args '[["600000.SH"]]'
+qmt-rpyc-client api list
+qmt-rpyc-client api describe market.get_ticks
+qmt-rpyc-client call --profile office market.get_ticks --payload '{"codes":["510050.SH"]}'
+qmt-rpyc-client download --profile office start history --payload '{"code":"510050.SH","period":"1d"}'
+qmt-rpyc-client download --profile office wait TASK_ID
+qmt-rpyc-client self-test --profile office
 ```
 
-Trading calls require `--confirm-trading`; unknown writes require
-`--confirm-write`. Callback parameters are not supported by the first CLI
-release.
+`api list` prints names and purposes; `api describe` prints parameters, defaults, result models and field meanings. Use `--json` for machine-readable documentation.
 
-The server generates a strong authentication key by default. Custom keys have
-no minimum length for compatibility, but the generated strong key remains the
-recommended choice.
+Trading calls require `--confirm-trading`. Public models live in `qmt_rpyc.contracts.<domain>` and errors in `qmt_rpyc.contracts.errors`. Each batch accepts at most 500 distinct codes, preserving input order and per-item failures. Option discovery covers current, unexpired contracts only.
 
-## Security
+## Raw SDK diagnostics
 
-Socket HMAC authentication completes before an RPyC connection is created.
-Authenticated peers are fully trusted and may access all account and trading
-capabilities. HMAC does not encrypt traffic: use only a trusted private LAN,
-TLS, or a VPN. See [SECURITY.md](SECURITY.md).
+Set `QMT_RPYC_DEBUG=1` on the server and restart to enable the optional diagnostic entry point:
 
-This project does not include or distribute xtquant, QMT, or MiniQMT and does
-not provide investment advice.
+```bash
+qmt-rpyc-client debug --profile office describe xtdata.get_option_detail_data
+qmt-rpyc-client debug --profile office call xtdata.get_full_tick --args '[["510050.SH"]]'
+```
 
-See [MIGRATION.md](MIGRATION.md) for the breaking `qmt_rpyc` namespace change.
-Licensed under the [MIT License](LICENSE).
+It forwards JSON arguments directly and returns JSON-safe SDK fields, independently of business contract negotiation.
+Authentication still applies. Calls can have real side effects and are never automatically retried.
+Python callers use `qmt_rpyc.client.debug.DebugClient`. See [debug interface](docs/api/debug.md) for serialization limits.
+
+## Reliability and security
+
+Contract names, parameters, result models and semantics participate in negotiation. RPC starts independently of the background QMT connection. No order or download creation is retried after an unknown outcome. Task completion means normal SDK return, not complete or fresh data. Dates are calendar dates; instants are timezone-aware and encoded in UTC.
+
+HMAC authenticates the socket before RPyC starts. Business payloads are strict JSON; pickle is disabled. A shared-key holder has full trust within the instance. Use a trusted internal network; HMAC does not encrypt, so untrusted networks require TLS or VPN. See [SECURITY.md](SECURITY.md).
+
+## Validation
+
+```bash
+python -m pip install -e ".[dev]"
+bash scripts/test.sh
+# Full synthetic SDK suite: Python 3.10/3.11
+python -m pip install -e ".[server,dev]"
+python -m pytest tests/ -v
+python scripts/dump_contract.py
+```
+
+Synthetic SDK and local socket tests are portable. Read-only deployment tests require a configured profile and `QMT_RPYC_LIVE=1`. Repeat deployment acceptance when upgrading the SDK or its adapter.
+
+This project does not distribute xtquant, QMT or MiniQMT. [MIT License](LICENSE).
