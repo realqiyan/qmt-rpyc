@@ -12,6 +12,7 @@ from qmt_rpyc.contracts.trading import (
     OrdersRequest,
     OrderSubmission,
     Position,
+    Pricing,
 )
 
 from .base import _API
@@ -27,9 +28,11 @@ class TradingAPI(_API):
     def list_orders(self, account: str, cancelable_only: bool = False) -> Tuple[Order, ...]:
         return self._call("trading.list_orders", OrdersRequest(account, cancelable_only))
 
-    def submit_order(self, account: str, instrument: str, side: Literal["BUY", "SELL"], quantity: int, price: float,
-                      strategy_name: str = "", correlation_ref: str = "") -> OrderSubmission:
-        return self._call("trading.submit_order", OrderRequest(account, instrument, side, quantity, price, strategy_name, correlation_ref))
+    def submit_order(self, account: str, instrument: str, side: Literal["BUY", "SELL"], quantity: int,
+                     *, pricing: Pricing, price: Optional[float] = None,
+                     strategy_name: str = "", correlation_ref: str = "") -> OrderSubmission:
+        return self._call("trading.submit_order", OrderRequest(
+            account, instrument, side, quantity, pricing, price, strategy_name, correlation_ref))
 
     def cancel_order(self, account: str, order_id: Optional[str] = None, market: Optional[str] = None,
                       exchange_order_id: Optional[str] = None) -> CancelSubmission:

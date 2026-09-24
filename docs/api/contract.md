@@ -51,3 +51,18 @@ python scripts/dump_contract.py --output /tmp/qmt-contract.json
 
 完整语义及实现边界见[架构](../design/architecture.md)。
 原始 SDK 的动态参数和结果通过[调试入口](debug.md)调查，不作为应用稳定接口。
+
+## 委托定价
+
+`trading.submit_order` 必须显式指定 `pricing`，不提供默认值或自动降级：
+
+| pricing | SDK 报价类型 | price |
+| --- | --- | --- |
+| `LIMIT` | `FIX_PRICE=11` | 必须为有限且大于零的限价 |
+| `LATEST_PRICE` | `LATEST_PRICE=5` | 有限非负参考价格原样传给 SDK；省略或 null 时传 0 |
+
+Python 调用的 `pricing`、`price` 为关键字参数。限价不会被转换为最新价；
+LATEST_PRICE 保留已有调用方的参考价格，参考价格不构成限价约束。
+委托查询识别以上两种模式；未知源类型返回 `UNKNOWN` 并保留 `source_price_type`。
+SDK 声明类型不代表每个品种和账户均能使用；不自动替换券商拒绝的委托类型。
+`0.5.0.dev4` 调整了契约指纹，客户端与服务端需同步升级。

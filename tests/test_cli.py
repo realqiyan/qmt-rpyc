@@ -35,7 +35,7 @@ def test_call_validates_request_and_encodes_model(monkeypatch, capsys):
 
 def test_trading_requires_confirmation_before_connecting(monkeypatch, capsys):
     monkeypatch.setattr(cli, '_connect', lambda args: pytest.fail('must not connect'))
-    payload = json.dumps(dict(account='test', instrument='600000.SH', side='BUY', quantity=100, price=1))
+    payload = json.dumps(dict(account='test', instrument='600000.SH', side='BUY', quantity=100, pricing='LIMIT', price=1))
     assert cli.main(['call', 'trading.submit_order', '--payload', payload]) == cli.EXIT_CONFIRMATION
     assert json.loads(capsys.readouterr().err)['status'] == 'confirmation_required'
 

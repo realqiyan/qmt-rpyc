@@ -2,7 +2,7 @@
 
 通过固定的 Python 模型和操作连接 QMT/MiniQMT。Windows 服务端对接券商定制 xtquant；客户端支持 Linux、macOS 和 Windows。
 
-当前源码版本 **0.5.0.dev2，未发布**。建议客户端与服务端安装同一份构建；连接时按契约版本和指纹检查兼容性。
+当前源码版本 **0.5.0**。建议客户端与服务端安装同一份构建；连接时按契约版本和指纹检查兼容性。
 [English](README.en.md) · [架构](docs/design/architecture.md) · [完整接口及字段](docs/api/contract.md)
 
 ## 安装与启动
@@ -29,7 +29,7 @@ Windows 安装包：完整解压含 wheel 的 ZIP，运行 `install-server.bat`�
 
 安装包服务端默认配置位于 `%LOCALAPPDATA%\qmt-rpyc\config.env`。配置向导可探测 MiniQMT、SDK、账户和本地网络；默认生成认证密钥。客户端 profile 使用系统配置目录，密钥优先放入系统 keyring，也可通过 `QMT_RPYC_AUTH_KEY` 提供。客户端配置优先级为命令行、环境变量、profile、默认值。服务端使用 `--config` 指定的文件或默认配置文件，环境变量覆盖文件值。非交互初始化导入已有 `.env` 时需同时提供 `--non-interactive --yes`。
 
-安装 `.[dev]` 后可用 `python -m build` 构建 wheel/sdist，在两端安装同一个 wheel；该命令不生成 Windows ZIP。ZIP 由发布工作流组装。当前开发版本尚未发布到包索引，不应以 PyPI 上其他版本替代本地构建进行验收。
+安装 `.[dev]` 后可用 `python -m build` 构建 wheel/sdist，在两端安装同一个 wheel；该命令不生成 Windows ZIP。ZIP 由发布工作流组装。正式版可通过 `pip install qmt-rpyc==0.5.0` 安装；Windows 服务端使用 `pip install "qmt-rpyc[server]==0.5.0"`。
 
 服务端默认使用 `QMT_RPYC_ADAPTER=xtquant_2.0.6.1`，切换与升级流程见[适配版本设计](docs/design/architecture.md#sdk-适配版本选择)。
 

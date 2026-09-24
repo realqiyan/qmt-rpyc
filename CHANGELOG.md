@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.0] - 2026-09-24
+
+- Replace dynamic SDK proxies with 28 typed business operations, fixed request/result models and contract negotiation. Existing clients must upgrade.
+- Add readable API/field documentation, authenticated opt-in SDK diagnostics and the versioned xtquant_2.0.6.1 adapter.
+- Support LIMIT and LATEST_PRICE orders, preserving existing reference-price arguments and uncertain-submission protection.
+- Validate Windows dev4 read-only queries and retain identical runtime code and contract in this stable release.
+
+## [0.5.0.dev4] - Unreleased
+
+- Preserve caller-supplied LATEST_PRICE reference prices through to the SDK, matching existing a-trader submissions.
+- Restrict order pricing to LIMIT and LATEST_PRICE; defer the two unvalidated best-price modes. Clients and servers must upgrade together.
+
+## [0.5.0.dev3] - Unreleased
+
+- Require explicit order pricing and support LIMIT and LATEST_PRICE. Limit orders require a positive finite price; latest-price orders preserve an optional finite non-negative reference price supplied by existing callers (zero when omitted).
+- Normalize both modes in order queries and probe their SDK constants; unknown pricing never falls back. Contract fingerprint changes require coordinated client/server upgrades.
+
 ## [0.5.0.dev2] - Unreleased
 
 - Remove the unsupported global datetime replacement and its diagnostic-script import; retain standard datetime identities for the strict codec and test timestamp boundaries and import order.

@@ -34,7 +34,7 @@ def test_typed_operations_over_socket(mock_server):
         bars = client.market.get_daily_bars(['600000.SH'], count=2).require_all()
         assert bars['600000.SH'].rows[0].trade_date == date(2026, 9, 18)
         assert client.health().contract_version == 2
-        result = client.trading.submit_order('ACC1', '600000.SH', 'BUY', 100, 10.0)
+        result = client.trading.submit_order('ACC1', '600000.SH', 'BUY', 100, pricing="LIMIT", price=10.0)
         assert isinstance(result, Submitted)
         assert result.order_id in {order.order_id for order in client.trading.list_orders('ACC1')}
         task = client.downloads.start_history('600000.SH', '1d')

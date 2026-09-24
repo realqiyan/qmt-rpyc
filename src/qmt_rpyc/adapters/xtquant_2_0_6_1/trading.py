@@ -20,6 +20,9 @@ from qmt_rpyc.contracts.trading import (
 from . import conversions as v
 from .source import SdkSource
 
+PRICE_TYPES = {"LIMIT": 11, "LATEST_PRICE": 5}
+PRICING_BY_SOURCE = {value: key for key, value in PRICE_TYPES.items()}
+
 STATUSES = {48: 'UNREPORTED', 49: 'WAIT_REPORTING', 50: 'REPORTED', 51: 'CANCEL_PENDING',
             52: 'PARTIAL_CANCEL_PENDING', 53: 'PARTIAL_CANCELLED', 54: 'CANCELLED',
             55: 'PARTIALLY_FILLED', 56: 'FILLED', 57: 'REJECTED', 255: 'UNKNOWN'}
@@ -66,7 +69,7 @@ class TradingAdapter:
                                submitted_at=v.instant(row['order_time']),
                                side={23: 'BUY', 24: 'SELL'}.get(row['order_type'], 'UNKNOWN'),
                                source_order_type=row['order_type'],
-                               pricing='LATEST_PRICE' if row['price_type'] == 5 else 'UNKNOWN',
+                               pricing=PRICING_BY_SOURCE.get(row['price_type'], 'UNKNOWN'),
                                source_price_type=row['price_type'], submitted_price=v.number(row['price']),
                                requested_quantity=row['order_volume'], filled_quantity=row['traded_volume'],
                                average_fill_price=v.number(row['traded_price']),
@@ -77,7 +80,8 @@ class TradingAdapter:
 
     def submit_order(self, r: OrderRequest) -> OrderSubmission:
         result = self.b.call('trader.order_stock', r.account, r.instrument,
-                             {'BUY': 23, 'SELL': 24}[r.side], r.quantity, 5, r.price,
+                             {'BUY': 23, 'SELL': 24}[r.side], r.quantity, PRICE_TYPES[r.pricing],
+                             r.price if r.price is not None else 0,
                              r.strategy_name, r.correlation_ref)
         if type(result) is not int:
             raise ValueError("source submission result must be an integer")

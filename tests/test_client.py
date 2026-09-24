@@ -112,7 +112,7 @@ def test_read_response_must_match_request_context(field, bad):
         client(response).reference.list_sectors()
 
 
-@pytest.mark.parametrize("call", [lambda c: c.trading.submit_order("account", "600000.SH", "BUY", 100, 5),
+@pytest.mark.parametrize("call", [lambda c: c.trading.submit_order("account", "600000.SH", "BUY", 100, pricing="LIMIT", price=5),
                                   lambda c: c.trading.cancel_order("account", order_id="123"),
                                   lambda c: c.downloads.start_sectors()])
 def test_invalid_mutation_response_is_unknown_and_never_retried(call):
@@ -141,7 +141,7 @@ def test_known_preexecution_error_is_not_unknown_submission():
                                  "pre_execution", "not_executed", request["request_id"])
         return dumps(dict(contract_version=2, request_id=request["request_id"], operation=request["operation"], status="error", error=error))
     with pytest.raises(QmtError) as caught:
-        client(response).trading.submit_order("a", "600000.SH", "BUY", 100, 1)
+        client(response).trading.submit_order("a", "600000.SH", "BUY", 100, pricing="LIMIT", price=1)
     assert not isinstance(caught.value, OutcomeUnknownError)
     assert caught.value.outcome == "not_executed"
 

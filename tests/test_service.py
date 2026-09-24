@@ -117,7 +117,7 @@ def test_all_download_kinds_and_status(invoke):
 
 def test_submission_query_and_both_cancellations(invoke):
     result = value(invoke, 'trading.submit_order', account='ACC1', instrument='600000.SH',
-                   side='BUY', quantity=100, price=10.0)
+                   side='BUY', quantity=100, pricing="LIMIT", price=10.0)
     assert result.status == 'submitted'
     orders = value(invoke, 'trading.list_orders', account='ACC1')
     assert orders[0].order_id == result.order_id
@@ -135,7 +135,7 @@ def test_post_submission_invalid_result_is_unknown(invoke, service, monkeypatch)
             return 0
         return original(api, *args, **kwargs)
     monkeypatch.setattr(source, 'call', call)
-    result = invoke('trading.submit_order', account='ACC1', instrument='600000.SH', side='BUY', quantity=100, price=10.0)
+    result = invoke('trading.submit_order', account='ACC1', instrument='600000.SH', side='BUY', quantity=100, pricing="LIMIT", price=10.0)
     assert result['status'] == 'error'
     assert result['error']['outcome'] == 'unknown'
 
@@ -276,7 +276,7 @@ def test_signature_drift_disables_only_dependent_operations(mock_xtquant, monkey
 def test_invalid_source_submission_is_never_a_known_rejection(invoke, service, monkeypatch, bad):
     source = service._dispatcher.providers.trading.b
     monkeypatch.setattr(source, 'call', lambda *args, **kwargs: bad)
-    result = invoke('trading.submit_order', account='ACC1', instrument='600000.SH', side='BUY', quantity=100, price=1.)
+    result = invoke('trading.submit_order', account='ACC1', instrument='600000.SH', side='BUY', quantity=100, pricing="LIMIT", price=1.)
     assert result['status'] == 'error'
     assert result['error']['outcome'] == 'unknown'
 

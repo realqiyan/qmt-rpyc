@@ -1,4 +1,5 @@
 """Trading requests and results."""
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Optional, Union
@@ -39,6 +40,9 @@ class Position:
             raise ValueError("invalid position quantities")
 
 
+Pricing = Literal["LIMIT", "LATEST_PRICE"]
+
+
 OrderStatus = Literal["UNREPORTED", "WAIT_REPORTING", "REPORTED", "CANCEL_PENDING", "PARTIAL_CANCEL_PENDING", "PARTIAL_CANCELLED", "CANCELLED", "PARTIALLY_FILLED", "FILLED", "REJECTED", "UNKNOWN"]
 
 
@@ -52,7 +56,7 @@ class Order:
     submitted_at: datetime
     side: Literal["BUY", "SELL", "UNKNOWN"]
     source_order_type: int
-    pricing: Literal["LATEST_PRICE", "UNKNOWN"]
+    pricing: Literal["LIMIT", "LATEST_PRICE", "UNKNOWN"]
     source_price_type: int
     submitted_price: float
     requested_quantity: int
@@ -138,18 +142,32 @@ class OrderRequest:
     instrument: str
     side: Literal["BUY", "SELL"]
     quantity: int
-    price: float
+    pricing: Pricing
+    price: Optional[float] = None
     strategy_name: str = ""
     correlation_ref: str = ""
-    pricing: Literal["LATEST_PRICE"] = "LATEST_PRICE"
 
     def __post_init__(self):
         validate_identity(self.account, "account")
         validate_identity(self.instrument, "instrument")
         if type(self.quantity) is not int or self.quantity <= 0:
             raise ValueError("quantity must be a positive integer")
-        if self.price < 0:
-            raise ValueError("price cannot be negative")
+        if self.pricing not in ("LIMIT", "LATEST_PRICE"):
+            raise ValueError("unsupported order pricing")
+        if self.pricing == "LIMIT":
+            try:
+                valid_price = type(self.price) in (int, float) and math.isfinite(self.price) and self.price > 0
+            except OverflowError:
+                valid_price = False
+            if not valid_price:
+                raise ValueError("LIMIT requires a finite positive price")
+        elif self.price is not None:
+            try:
+                valid_price = type(self.price) in (int, float) and math.isfinite(self.price) and self.price >= 0
+            except OverflowError:
+                valid_price = False
+            if not valid_price:
+                raise ValueError("LATEST_PRICE requires a finite non-negative price when provided")
         if len(self.correlation_ref.encode("ascii")) > 24:
             raise ValueError("correlation_ref exceeds 24 ASCII bytes")
 

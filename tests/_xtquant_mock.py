@@ -186,6 +186,10 @@ class XtQuantTrader:
             "stock_code": stock_code,
             "order_type": order_type,
             "order_volume": order_volume,
+            "price_type": price_type,
+            "price": price,
+            "strategy_name": strategy_name,
+            "order_remark": order_remark,
         }
         return order_id
 

@@ -89,7 +89,7 @@ SIGNATURES = {
     'trader.cancel_order_stock_sysid': inspect.signature(_cancel_order_stock_sysid),
 }
 
-CONSTANTS = {'STOCK_BUY': 23, 'STOCK_SELL': 24, 'LATEST_PRICE': 5, 'ORDER_SUCCEEDED': 56, 'ORDER_PART_CANCEL': 53, 'ORDER_CANCELED': 54, 'ORDER_JUNK': 57, 'ORDER_PART_SUCC': 55, 'ORDER_PARTSUCC_CANCEL': 52, 'ORDER_REPORTED_CANCEL': 51, 'SH_MARKET': 0, 'SZ_MARKET': 1, 'ORDER_UNREPORTED': 48, 'ORDER_WAIT_REPORTING': 49, 'ORDER_REPORTED': 50, 'ORDER_UNKNOWN': 255}
+CONSTANTS = {'STOCK_BUY': 23, 'STOCK_SELL': 24, 'LATEST_PRICE': 5, 'FIX_PRICE': 11, 'ORDER_SUCCEEDED': 56, 'ORDER_PART_CANCEL': 53, 'ORDER_CANCELED': 54, 'ORDER_JUNK': 57, 'ORDER_PART_SUCC': 55, 'ORDER_PARTSUCC_CANCEL': 52, 'ORDER_REPORTED_CANCEL': 51, 'SH_MARKET': 0, 'SZ_MARKET': 1, 'ORDER_UNREPORTED': 48, 'ORDER_WAIT_REPORTING': 49, 'ORDER_REPORTED': 50, 'ORDER_UNKNOWN': 255}
 
 def signature_problem(fn, expected, unbound=False):
     """Compare structure and defaults, ignoring annotations and formatting."""
@@ -116,7 +116,7 @@ def probe(api, environment):
         return problem
     required = []
     if name in ('order_stock', 'query_stock_orders'):
-        required = [key for key in CONSTANTS if key.startswith(('STOCK_', 'ORDER_')) or key == 'LATEST_PRICE']
+        required = [key for key in CONSTANTS if key.startswith(('STOCK_', 'ORDER_')) or key in ('LATEST_PRICE', 'FIX_PRICE')]
     elif name == 'cancel_order_stock_sysid':
         required = ['SH_MARKET', 'SZ_MARKET']
     for key in required:

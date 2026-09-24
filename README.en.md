@@ -2,7 +2,7 @@
 
 A typed Python bridge to a broker-customized QMT/MiniQMT deployment. The server runs on Windows with Python 3.10/3.11; clients support Python 3.9+ on Linux, macOS and Windows.
 
-Current source version: **0.5.0.dev2, unreleased**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
+Current source version: **0.5.0**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
 
 ## Install from source
 
@@ -28,7 +28,7 @@ The managed server configuration lives in `%LOCALAPPDATA%\qmt-rpyc\config.env`. 
 
 Server environment variables override the selected configuration file (`--config PATH` or the default). Importing an existing `.env` without prompts requires `init --non-interactive --yes`.
 
-With `.[dev]` installed, `python -m build` creates a wheel/sdist; the release workflow separately assembles the Windows ZIP. This development version is not published to a package index.
+With `.[dev]` installed, `python -m build` creates a wheel/sdist; the release workflow separately assembles the Windows ZIP. Install the stable client with `pip install qmt-rpyc==0.5.0`, or the Windows server with `pip install "qmt-rpyc[server]==0.5.0"`.
 
 The default server adapter is `QMT_RPYC_ADAPTER=xtquant_2.0.6.1`, implemented in the valid Python package `adapters/xtquant_2_0_6_1`. Selection is explicit and requires a restart; it does not install or switch the broker SDK.
 
