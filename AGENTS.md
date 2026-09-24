@@ -139,8 +139,10 @@ py -3.11 -m pip install --index-url https://pypi.org/simple ^
 ```
 
 Production promotion of an RC is a separate, explicitly authorized action.
-Run the `Release` workflow manually with the existing tag as its `tag` input.
-The `promote-to-pypi` job downloads exactly the wheel and sdist attached to the
-existing GitHub Release and publishes them through the `pypi` trusted-publisher
+Run the `Release` workflow manually with the existing tag as its `tag` input
+and `repository=pypi` (the default). To publish the same files to TestPyPI,
+select `repository=testpypi`. The `publish-existing-release` job downloads
+exactly the wheel and sdist attached to the
+existing GitHub Release and publishes them through the selected trusted-publisher
 environment; do not rebuild between Windows validation and promotion. Stable
 tags publish directly to production PyPI after CI and GitHub Release creation.

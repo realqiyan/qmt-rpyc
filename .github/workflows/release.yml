@@ -7,9 +7,17 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing GitHub Release tag to promote to PyPI
+        description: Existing GitHub Release tag to publish
         required: true
         type: string
+      repository:
+        description: Package index for the existing release artifacts
+        required: true
+        type: choice
+        default: pypi
+        options:
+          - pypi
+          - testpypi
 
 permissions:
   contents: write
@@ -76,11 +84,11 @@ jobs:
         if: ${{ !contains(github.ref_name, 'rc') }}
         uses: pypa/gh-action-pypi-publish@release/v1
 
-  promote-to-pypi:
+  publish-existing-release:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: ${{ inputs.repository }}
     permissions:
       contents: read
       id-token: write
@@ -105,4 +113,10 @@ jobs:
           test -f "dist/qmt_rpyc-${VERSION}.tar.gz"
           test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 2
       - name: Publish existing distributions to PyPI
+        if: inputs.repository == 'pypi'
         uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Publish existing distributions to TestPyPI
+        if: inputs.repository == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
