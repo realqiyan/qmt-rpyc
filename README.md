@@ -31,6 +31,8 @@ Windows 安装或升级：运行 `install-server.bat`，完成初始化和检查
 
 安装 `.[dev]` 后可用 `python -m build` 构建 wheel/sdist，在两端安装同一个 wheel；该命令不生成 Windows ZIP。ZIP 由发布工作流组装。正式版可通过 `pip install qmt-rpyc==0.5.0` 安装；Windows 服务端使用 `pip install "qmt-rpyc[server]==0.5.0"`。
 
+启动日志中的 `SDK module` 行记录实际加载的 xtquant、xtdata、xttrader、xttype 和已加载原生扩展的文件路径；`resolved` 是解析目录联接后的真实路径。排查 SDK 升级时以这些路径为准，适配器名称不代表实际加载的 SDK 版本。
+
 服务端默认使用 `QMT_RPYC_ADAPTER=xtquant_2.0.6.1`，切换与升级流程见[适配版本设计](docs/design/architecture.md#sdk-适配版本选择)。
 
 ## Python 使用
