@@ -79,6 +79,7 @@ def _load_config(config_path=None):
         "debug": _env_bool("QMT_RPYC_DEBUG"),
         "adapter": os.environ.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER),
         "qmt_path": os.environ.get("QMT_PATH", ""),
+        "xtquant_path": os.environ.get("QMT_XTQUANT_PATH", ""),
         "qmt_session_id": _env_int("QMT_SESSION_ID", 1, 0),
         "qmt_account_id": os.environ.get("QMT_ACCOUNT_ID", ""),
         "tls_keyfile": os.environ.get("QMT_RPYC_TLS_KEY"),
@@ -167,6 +168,10 @@ def start_server(cfg, tls=None):
     from rpyc.utils.server import ThreadedServer
 
     adapter = select_adapter(cfg.get("adapter", DEFAULT_ADAPTER))
+    from qmt_rpyc.server.sdk_loader import configured_sdk_path, load_sdk
+    sdk_path = cfg.get("xtquant_path", configured_sdk_path())
+    if sdk_path:
+        load_sdk(sdk_path)
     ConnectionManager = adapter.connection_type()
     from qmt_rpyc.server.auth_limiter import rate_limiter
     from qmt_rpyc.server.dispatch import Dispatcher

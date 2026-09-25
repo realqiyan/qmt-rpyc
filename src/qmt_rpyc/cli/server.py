@@ -24,6 +24,8 @@ from qmt_rpyc.server.environment import (
     wire_xtquant,
 )
 
+from qmt_rpyc.server.sdk_loader import configured_sdk_path, load_sdk, validate_sdk_path
+
 FIREWALL_RULE = "qmt-rpyc server"
 
 
@@ -83,6 +85,7 @@ def _write_env(path, values):
         ("QMT_RPYC_DEBUG", values.get("QMT_RPYC_DEBUG", "0")),
         ("QMT_RPYC_ALLOW_INSECURE", values.get("QMT_RPYC_ALLOW_INSECURE", "0")),
         ("QMT_PATH", values.get("QMT_PATH", "")),
+        ("QMT_XTQUANT_PATH", values.get("QMT_XTQUANT_PATH", "")),
         ("QMT_SESSION_ID", values.get("QMT_SESSION_ID", "1")),
         ("QMT_ACCOUNT_ID", values.get("QMT_ACCOUNT_ID", "")),
         ("QMT_RPYC_TLS_KEY", values.get("QMT_RPYC_TLS_KEY", "")),
@@ -133,6 +136,7 @@ def _masked_summary(values):
         "host": values.get("QMT_RPYC_HOST"),
         "port": values.get("QMT_RPYC_PORT"),
         "qmt_path": values.get("QMT_PATH"),
+        "xtquant_path": configured_sdk_path(values),
         "account": account or "(market-data only)",
         "auth_key": "set" if values.get("QMT_RPYC_AUTH_KEY") else "missing",
     }
@@ -250,11 +254,17 @@ def _cmd_init(args):
         "QMT_SESSION_ID": values.get("QMT_SESSION_ID", "1"),
         "QMT_ACCOUNT_ID": account,
     })
+    sdk_path = args.xtquant_path if args.xtquant_path is not None else configured_sdk_path(values)
+    if not args.non_interactive and args.xtquant_path is None:
+        sdk_path = input("xtquant package directory (empty uses Python imports) [{}]: ".format(sdk_path)).strip() or sdk_path
+    if sdk_path:
+        validate_sdk_path(sdk_path)
+    values['QMT_XTQUANT_PATH'] = sdk_path
     _write_env(target, values)
 
     wired = False
     xtquant_site = detected.get("xtquant_site")
-    if xtquant_site and (
+    if not sdk_path and xtquant_site and (
         args.yes or (
             not args.non_interactive and _confirm(
                 "Wire detected xtquant from {}?".format(xtquant_site),
@@ -327,10 +337,11 @@ def _cmd_check(args):
     add("MiniQMT", bool(detected.get("miniqmt")),
         "XtMiniQmt.exe is not running" if not detected.get("miniqmt") else "")
     try:
-        import xtquant  # noqa: F401
+        xtquant = load_sdk(configured_sdk_path(values))
         xtquant_ok = True
-        detail = str(managed_xtquant_path())
-    except ImportError as e:
+        origin = getattr(xtquant, "__file__", None)
+        detail = str(Path(origin).resolve()) if origin else "module path unavailable"
+    except Exception as e:
         xtquant_ok = False
         detail = str(e)
     add("xtquant", xtquant_ok, detail)
@@ -509,17 +520,22 @@ def _cmd_xtquant(args):
     path = managed_xtquant_path()
     if args.xtquant_command == "check":
         try:
-            import xtquant
+            values = _read_env(config_path(args.config))
+            xtquant = load_sdk(configured_sdk_path(values))
             version = getattr(xtquant, "__version__", None)
             ok = True
-            detail = str(getattr(xtquant, "__file__", path))
-        except ImportError as e:
+            origin = getattr(xtquant, "__file__", None)
+            detail = str(Path(origin).resolve()) if origin else "module path unavailable"
+        except Exception as e:
             ok = False
             version = None
             detail = str(e)
         _emit({"status": "ok" if ok else "failed", "path": detail,
                "version": version}, args.compact)
         return 0 if ok else 1
+    values = _read_env(config_path(args.config))
+    if configured_sdk_path(values):
+        raise ValueError('QMT_XTQUANT_PATH is configured; edit that setting instead of repairing an unused link')
     detected = detect_environment()
     site = args.source or detected.get("xtquant_site")
     if not site:
@@ -532,6 +548,7 @@ def _cmd_api_dump(args):
     from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
     values = _read_env(config_path(args.config))
     adapter = select_adapter(os.environ.get("QMT_RPYC_ADAPTER", values.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)))
+    load_sdk(configured_sdk_path(values))
     surface = adapter.discover()
     if args.without_docs:
         for section, key in (
@@ -621,6 +638,7 @@ Global options must appear before COMMAND. Run
         "--qmt-path",
         help="QMT userdata_mini directory",
     )
+    init.add_argument("--xtquant-path", help="absolute xtquant package directory; overrides automatic SDK import")
     init.add_argument(
         "--account",
         help="stock account ID; omit for market-data-only operation",

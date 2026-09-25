@@ -40,6 +40,8 @@ def build_dump(include_docs=True):
     import os
     from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
 
+    from qmt_rpyc.server.sdk_loader import load_sdk
+    load_sdk()  # Uses QMT_XTQUANT_PATH from the process environment.
     surface = select_adapter(os.environ.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)).discover()
     if not include_docs:
         _remove_docs(surface)

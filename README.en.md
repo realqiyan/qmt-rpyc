@@ -2,7 +2,7 @@
 
 A typed Python bridge to a broker-customized QMT/MiniQMT deployment. The server runs on Windows with Python 3.10/3.11; clients support Python 3.9+ on Linux, macOS and Windows.
 
-Current source version: **0.5.0**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
+Current source version: **0.5.1.dev2, unreleased test build**. Install this test build from its bundled wheel; online installation without a wheel still targets stable 0.5.0. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
 
 ## Install from source
 
@@ -31,6 +31,8 @@ Server environment variables override the selected configuration file (`--config
 With `.[dev]` installed, `python -m build` creates a wheel/sdist; the release workflow separately assembles the Windows ZIP. Install the stable client with `pip install qmt-rpyc==0.5.0`, or the Windows server with `pip install "qmt-rpyc[server]==0.5.0"`.
 
 Startup `SDK module` log entries show the imported xtquant modules and loaded native extension paths; `resolved` follows filesystem junctions. Use these paths to verify SDK upgrades: the adapter name does not identify the loaded SDK version.
+
+Set `QMT_XTQUANT_PATH` in the server config or environment to the absolute **xtquant package directory** containing `__init__.py`, independently of `QMT_PATH`. Environment values override the config. Empty retains normal imports; invalid explicit paths fail without fallback. Restart to change SDKs. `init --xtquant-path PATH` saves it and preserves it on subsequent initialization without changing the old junction. `start`, `check`, `xtquant check`, and `api dump` share this selection; the standalone dump script reads the process environment. When configured, edit this setting instead of using `xtquant repair`.
 
 The default server adapter is `QMT_RPYC_ADAPTER=xtquant_2.0.6.1`, implemented in the valid Python package `adapters/xtquant_2_0_6_1`. Selection is explicit and requires a restart; it does not install or switch the broker SDK.
 

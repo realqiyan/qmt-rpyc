@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.1.dev2] - Unreleased
+
+- Add QMT_XTQUANT_PATH for explicit SDK selection independently of userdata_mini, shared by startup, checks, initialization and API export. Invalid or conflicting paths fail without falling back to the old SDK.
+- Preserve explicit SDK configuration during initialization without replacing existing junctions. Restart is required to change SDKs.
+
+## [0.5.1.dev1] - Unreleased
+
+- Log actual loaded SDK module paths, resolved junction targets and loaded native extensions during server startup.
+- Allow the Windows installer to use the pinned stable PyPI release when no wheel is bundled; preserve exact bundled-wheel installation for acceptance builds.
+- Start the managed server when a source checkout has no initialized local environment.
+- Keep the 0.5.0 business contract unchanged.
+
 ## [0.5.0] - 2026-09-24
 
 - Replace dynamic SDK proxies with 28 typed business operations, fixed request/result models and contract negotiation. Existing clients must upgrade.

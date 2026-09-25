@@ -2,7 +2,7 @@
 
 通过固定的 Python 模型和操作连接 QMT/MiniQMT。Windows 服务端对接券商定制 xtquant；客户端支持 Linux、macOS 和 Windows。
 
-当前源码版本 **0.5.0**。建议客户端与服务端安装同一份构建；连接时按契约版本和指纹检查兼容性。
+当前源码版本 **0.5.1.dev2，未发布测试版**。测试版使用随包 wheel 安装；无 wheel 的在线安装仍固定为正式版 0.5.0。建议客户端与服务端安装同一份构建；连接时按契约版本和指纹检查兼容性。
 [English](README.en.md) · [架构](docs/design/architecture.md) · [完整接口及字段](docs/api/contract.md)
 
 ## 安装与启动
@@ -32,6 +32,15 @@ Windows 安装或升级：运行 `install-server.bat`，完成初始化和检查
 安装 `.[dev]` 后可用 `python -m build` 构建 wheel/sdist，在两端安装同一个 wheel；该命令不生成 Windows ZIP。ZIP 由发布工作流组装。正式版可通过 `pip install qmt-rpyc==0.5.0` 安装；Windows 服务端使用 `pip install "qmt-rpyc[server]==0.5.0"`。
 
 启动日志中的 `SDK module` 行记录实际加载的 xtquant、xtdata、xttrader、xttype 和已加载原生扩展的文件路径；`resolved` 是解析目录联接后的真实路径。排查 SDK 升级时以这些路径为准，适配器名称不代表实际加载的 SDK 版本。
+
+可在服务端配置文件或环境变量中指定 `QMT_XTQUANT_PATH`，值为包含 `__init__.py` 的 **xtquant 包目录**，不是其父级 site-packages。例如：
+
+```dotenv
+QMT_PATH=C:\MiniQMT\userdata_mini
+QMT_XTQUANT_PATH=C:\MiniQMT\bin.x64\Lib\site-packages\xtquant
+```
+
+环境变量优先于配置文件；留空保留默认导入方式。显式路径无效或加载失败时直接报错，不回退旧 SDK；切换后必须重启。`init --xtquant-path PATH` 可保存路径，已有配置再次初始化时会保留该值；显式配置时不修改旧目录联接。`start`、`check`、`xtquant check`、`api dump` 使用同一路径选择规则；独立 `scripts/dump_api_surface.py` 读取进程环境变量中的该设置。此时 `xtquant repair` 不修改联接，应直接更改配置路径。
 
 服务端默认使用 `QMT_RPYC_ADAPTER=xtquant_2.0.6.1`，切换与升级流程见[适配版本设计](docs/design/architecture.md#sdk-适配版本选择)。
 
