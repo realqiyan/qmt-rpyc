@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1] - 2026-09-25
+
+- Add explicit QMT_XTQUANT_PATH selection and startup diagnostics for loaded SDK modules, resolved junctions and native extensions. Invalid configured SDK paths fail without falling back.
+- Preserve SDK selection across initialization, checks and API exports; require a restart when changing SDKs.
+- Support Windows installation from PyPI when no wheel is bundled and managed startup from checkouts without a local environment.
+- Preserve the 0.5.0 business contract. Validate queries and bounded historical downloads against the deployed 2.1.9.1 SDK; order submission/cancellation were not exercised.
+
 ## [0.5.1.dev2] - Unreleased
 
 - Add QMT_XTQUANT_PATH for explicit SDK selection independently of userdata_mini, shared by startup, checks, initialization and API export. Invalid or conflicting paths fail without falling back to the old SDK.

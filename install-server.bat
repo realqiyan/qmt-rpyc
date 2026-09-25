@@ -6,7 +6,7 @@ set "QMT_RPYC_ROOT=%LOCALAPPDATA%\qmt-rpyc"
 set "QMT_RPYC_VENV=%QMT_RPYC_ROOT%\venv"
 set "PYTHON_CMD="
 REM Keep the online installer pin aligned with the release version.
-set "QMT_RPYC_VERSION=0.5.0"
+set "QMT_RPYC_VERSION=0.5.1"
 
 REM Prefer the bundled acceptance/release wheel; otherwise use the pinned PyPI release.
 set "BUNDLED_WHEEL="
