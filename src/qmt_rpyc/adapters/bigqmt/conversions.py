@@ -117,7 +117,7 @@ def batch(codes, model, getter, workers=8):
             logger.warning('BigQMT source item failed', exc_info=True)
             return Failure(code, ItemError('SOURCE_ERROR', 'source item failed'))
         except (TypeError, ValueError, KeyError, OverflowError) as exc:
-            logger.warning('BigQMT result item failed validation', exc_info=True)
+            logger.warning('BigQMT result item failed validation: code=%s model=%s', code, model.__name__, exc_info=True)
             return Failure(code, ItemError(exc.code if isinstance(exc, ItemFailure) else 'INVALID_RESULT',
                 str(exc) if isinstance(exc, ItemFailure) else 'source item does not satisfy the contract'))
     if not codes:

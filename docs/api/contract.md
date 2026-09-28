@@ -1,7 +1,8 @@
 # 公共 API 与模型查询
 
 公共操作、请求参数和返回类型的权威定义在 `src/qmt_rpyc/contracts/operations.py`。
-当前契约版本为 `4`，包含 27 项固定操作；SDK 调试入口独立于公共契约。
+当前发行版本为 `0.7.0`，包含 27 项固定操作；SDK 调试入口独立于公共契约。
+内部契约兼容编号为 `7`，不是软件发行版本。详见[版本规则](../versioning.md)。
 
 K 线仅支持日 K；已移除日内查询及分钟/小时历史下载。客户端与服务端须同步升级，
 旧版契约协商会失败，不会静默把日内请求改成日线。
@@ -71,7 +72,7 @@ python scripts/dump_contract.py --output /tmp/qmt-contract.json
 
 Python 调用的 `pricing`、`price` 为关键字参数。限价不会被转换为最新价；
 LATEST_PRICE 保留已有调用方的参考价格，参考价格不构成限价约束。
-委托查询识别以上两种模式；未知源类型返回 `UNKNOWN` 并保留 `source_price_type`。
+委托查询识别以上两种模式；未知源类型返回 `UNKNOWN`，原始价格类型可通过原生调试接口核查。
 SDK 声明类型不代表每个品种和账户均能使用；不自动替换券商拒绝的委托类型。
 `0.5.0.dev4` 调整了契约指纹，客户端与服务端需同步升级。
 
@@ -86,3 +87,18 @@ BigQMT 的 SettlementPrice 是证券资料中的前结算字段，不用快照�
 BigQMT 底层标的列表允许返回最近成功缓存，可能落后于最新上市变动；首次无缓存时
 最多等待 20 秒，超时明确失败但后台刷新继续。缓存每日刷新、失败至少间隔 60 秒再刷新，
 不改行情/合约数据有效期。诊断 bridge.cache_info 的 underlyings 部分显示更新时间和错误。
+
+## 0.7.0 迁移说明
+
+公共契约 v7，客户端和服务端须同步升级。交易操作数量和业务状态语义不变。
+删除 Asset/Position/Order.source_account_type、Position.frozen_volume/
+on_road_volume/yesterday_volume、Order.source_order_type/source_price_type、
+Order/OrderRequest.strategy_name，以及提交/撤单结果的 source_code。
+保留 source_status、source_status_message、correlation_ref 和两种撤单身份。
+策略名由业务应用管理；adapter 在 SDK 的策略名参数位置传空字符串，
+correlation_ref 仍透传投资备注，不能拿策略名代替订单关联标记。
+撤单 succeeded 仍仅表示请求成功，不代表订单已经撤销。
+
+从 0.5.1 升级的消费端还须移除日内 K 线能力检查与调用，修改契约版本检查，
+同步 requirements 与启动自动升级目标。完整 QMT 的嵌入策略也须替换为 0.7.0
+发行包内文件：公共契约与桥协议兼容编号统一为 7，旧组件不能混用。

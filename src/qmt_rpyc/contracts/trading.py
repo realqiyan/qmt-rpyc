@@ -10,7 +10,6 @@ from .common import validate_identity
 @dataclass(frozen=True)
 class Asset:
     account: str
-    source_account_type: int
     cash: float
     frozen_cash: float
     market_value: float
@@ -23,13 +22,9 @@ class Asset:
 @dataclass(frozen=True)
 class Position:
     account: str
-    source_account_type: int
     instrument: str
     quantity: int
     available_quantity: int
-    frozen_volume: int
-    on_road_volume: int
-    yesterday_volume: int
     open_price: float
     market_value: float
 
@@ -49,15 +44,12 @@ OrderStatus = Literal["UNREPORTED", "WAIT_REPORTING", "REPORTED", "CANCEL_PENDIN
 @dataclass(frozen=True)
 class Order:
     account: str
-    source_account_type: int
     instrument: str
     order_id: str
     exchange_order_id: Optional[str]
     submitted_at: datetime
     side: Literal["BUY", "SELL", "UNKNOWN"]
-    source_order_type: int
     pricing: Literal["LIMIT", "LATEST_PRICE", "UNKNOWN"]
-    source_price_type: int
     submitted_price: float
     requested_quantity: int
     filled_quantity: int
@@ -65,7 +57,6 @@ class Order:
     status: OrderStatus
     source_status: int
     source_status_message: str
-    strategy_name: str
     correlation_ref: str
 
     def __post_init__(self):
@@ -96,7 +87,6 @@ class Submitted:
 @dataclass(frozen=True)
 class Rejected:
     reason: str
-    source_code: int
     status: Literal["rejected"] = "rejected"
 
 
@@ -105,14 +95,12 @@ OrderSubmission = Union[Submitted, Rejected]
 
 @dataclass(frozen=True)
 class RequestSucceeded:
-    source_code: int
     status: Literal["succeeded"] = "succeeded"
 
 
 @dataclass(frozen=True)
 class RequestRejected:
     reason: str
-    source_code: int
     status: Literal["rejected"] = "rejected"
 
 
@@ -144,7 +132,6 @@ class OrderRequest:
     quantity: int
     pricing: Pricing
     price: Optional[float] = None
-    strategy_name: str = ""
     correlation_ref: str = ""
 
     def __post_init__(self):

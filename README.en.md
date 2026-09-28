@@ -2,7 +2,7 @@
 
 A typed Python bridge to a broker-customized QMT/MiniQMT deployment. The server runs on Windows with Python 3.10/3.11; clients support Python 3.9+ on Linux, macOS and Windows.
 
-Current source version: **0.6.0**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
+Current source version: **0.7.0**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
 
 ## Install from source
 
@@ -22,13 +22,13 @@ start-rpyc.bat
 
 Source scripts create `.venv`, install server/development dependencies and explicitly use the checkout `.env`. In a source checkout, `start-rpyc.bat` prefers an initialized source environment; if absent, it uses the managed installation and its configuration.
 
-For Windows installation or upgrades, stop the existing server, run `install-server.bat`, then `start-rpyc.bat`. The installer prefers a single wheel beside the script; without one, it installs or upgrades from PyPI to the pinned release (currently 0.6.0). Existing configuration is preserved. It downloads third-party dependencies and installs into `%LOCALAPPDATA%\qmt-rpyc\venv`. For maintenance, use `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`.
+For Windows installation or upgrades, stop the existing server, run `install-server.bat`, then `start-rpyc.bat`. The installer prefers a single wheel beside the script; without one, it installs or upgrades from PyPI to the pinned release (currently 0.7.0). Existing configuration is preserved. It downloads third-party dependencies and installs into `%LOCALAPPDATA%\qmt-rpyc\venv`. For maintenance, use `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`.
 
 The managed server configuration lives in `%LOCALAPPDATA%\qmt-rpyc\config.env`. Client profiles use the platform configuration directory; credentials use the system keyring or `QMT_RPYC_AUTH_KEY`.
 
 Server environment variables override the selected configuration file (`--config PATH` or the default). Importing an existing `.env` without prompts requires `init --non-interactive --yes`.
 
-With `.[dev]` installed, `python -m build` creates a wheel/sdist; the release workflow separately assembles the Windows ZIP. Install the stable client with `pip install qmt-rpyc==0.6.0`, or the Windows server with `pip install "qmt-rpyc[server]==0.6.0"`.
+With `.[dev]` installed, `python -m build` creates a wheel/sdist; the release workflow separately assembles the Windows ZIP. Install the stable client with `pip install qmt-rpyc==0.7.0`, or the Windows server with `pip install "qmt-rpyc[server]==0.7.0"`.
 
 Startup `SDK module` log entries show the imported xtquant modules and loaded native extension paths; `resolved` follows filesystem junctions. Use these paths to verify SDK upgrades: the adapter name does not identify the loaded SDK version.
 
@@ -98,10 +98,10 @@ Synthetic SDK and local socket tests are portable. Read-only deployment tests re
 This project does not distribute xtquant, QMT or MiniQMT. [MIT License](LICENSE).
 
 
-### Full QMT in 0.6.0
+### Full QMT in 0.7.0
 
-Upgrade both client and server for public contract v4. The Windows release ZIP includes
-`bigqmt_strategy.py` encoded as GBK (private bridge protocol 4). Load it in full QMT,
+Upgrade both client and server for public contract v7. The Windows release ZIP includes
+`bigqmt_strategy.py` encoded as GBK (private bridge protocol 7). Load it in full QMT,
 then use `install-bigqmt.bat` and `start-bigqmt.bat`; existing configuration is preserved.
 Startup never submits trades. BigQMT trades use the STOCK account supplied per request.
 Debug remains read-only. Underlying discovery may return the persisted last successful list;

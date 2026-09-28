@@ -1,4 +1,5 @@
 """BigQMT STOCK trading with explicit identity reconciliation and no replay."""
+import logging
 import time
 import uuid
 from datetime import datetime
@@ -7,6 +8,8 @@ from dataclasses import asdict
 from qmt_rpyc.adapters.errors import ProviderError
 from qmt_rpyc.contracts.trading import Asset, Position, Order, Submitted, Rejected, RequestSucceeded, RequestRejected
 from .conversions import number, SHANGHAI
+
+logger = logging.getLogger(__name__)
 
 STATUSES = {48: 'UNREPORTED', 49: 'WAIT_REPORTING', 50: 'REPORTED', 51: 'CANCEL_PENDING',
             52: 'PARTIAL_CANCEL_PENDING', 53: 'PARTIAL_CANCELLED', 54: 'CANCELLED',
@@ -48,14 +51,13 @@ class TradingAdapter:
         if len(rows) != 1:
             raise ValueError('ambiguous asset identity')
         row = rows[0]
-        return Asset(r.account, kind, number(row['m_dAvailable']), number(row['m_dFrozenCash']),
+        return Asset(r.account, number(row['m_dAvailable']), number(row['m_dFrozenCash']),
                      number(row['m_dStockValue']), number(row['m_dBalance']))
 
     def list_positions(self, r):
         kind, rows = self._read(r.account, 'POSITION')
-        result = [Position(r.account, kind, row['m_strInstrumentID'] + '.' + row['m_strExchangeID'],
-                           row['m_nVolume'], row['m_nCanUseVolume'], row['m_nFrozenVolume'],
-                           row['m_nOnRoadVolume'], row['m_nYesterdayVolume'],
+        result = [Position(r.account, row['m_strInstrumentID'] + '.' + row['m_strExchangeID'],
+                           row['m_nVolume'], row['m_nCanUseVolume'],
                            number(row['m_dOpenPrice']), number(row['m_dMarketValue'])) for row in rows]
         if len({p.instrument for p in result}) != len(result):
             raise ValueError('duplicate position identity')
@@ -65,16 +67,16 @@ class TradingAdapter:
         kind, rows = self._read(r.account, 'ORDER', r.cancelable_only)
         result = []
         for row in rows:
-            result.append(Order(account=r.account, source_account_type=kind,
+            result.append(Order(account=r.account,
                 instrument=row['m_strInstrumentID'] + '.' + row['m_strExchangeID'],
                 order_id=row['m_strOrderRef'], exchange_order_id=row['m_strOrderSysID'] or None,
                 submitted_at=datetime.strptime(row['m_strInsertDate'] + row['m_strInsertTime'], '%Y%m%d%H%M%S').replace(tzinfo=SHANGHAI),
-                side={23: 'BUY', 24: 'SELL'}.get(row['m_nOpType'], 'UNKNOWN'), source_order_type=row['m_nOpType'],
-                pricing='UNKNOWN', source_price_type=row['m_nOrderPriceType'],
+                side={23: 'BUY', 24: 'SELL'}.get(row['m_nOpType'], 'UNKNOWN'),
+                pricing='UNKNOWN',
                 submitted_price=number(row['m_dLimitPrice']), requested_quantity=row['m_nVolumeTotalOriginal'],
                 filled_quantity=row['m_nVolumeTraded'], average_fill_price=number(row['m_dTradedPrice']),
                 status=STATUSES.get(row['m_nOrderStatus'], 'UNKNOWN'), source_status=row['m_nOrderStatus'],
-                source_status_message=row['m_strErrorMsg'], strategy_name=row['m_strSource'], correlation_ref=row['m_strRemark']))
+                source_status_message=row['m_strErrorMsg'], correlation_ref=row['m_strRemark']))
         if len({o.order_id for o in result}) != len(result):
             raise ValueError('duplicate order reference')
         return tuple(sorted(result, key=lambda o: (o.submitted_at, o.order_id)))
@@ -83,7 +85,7 @@ class TradingAdapter:
         marker = r.correlation_ref or 'qp' + uuid.uuid4().hex[:20]
         args = dict(account=r.account, instrument=r.instrument, side=r.side, quantity=r.quantity,
                     pricing=r.pricing, price=r.price if r.price is not None else 0,
-                    strategy_name=r.strategy_name, marker=marker)
+                    strategy_name='', marker=marker)
         value = self._call('trade_submit', args)
         # Reconciliation runs outside QMT's callback: timers and heartbeats can progress.
         try:
@@ -111,7 +113,7 @@ class TradingAdapter:
                     if not isinstance(ref, str) or not ref:
                         raise ValueError('missing submission reference')
                     if selected['m_nOrderStatus'] == 57:
-                        return Rejected(selected['m_strErrorMsg'] or 'broker rejected order', 57)
+                        return Rejected(selected['m_strErrorMsg'] or 'broker rejected order')
                     return Submitted(ref)
                 self.sleep(.2)
         except Exception as exc:
@@ -123,5 +125,6 @@ class TradingAdapter:
         if type(value['accepted']) is not bool or type(value['source_code']) is not int:
             raise unknown('unrecognized cancellation response; do not retry')
         if value['accepted']:
-            return RequestSucceeded(value['source_code'])
-        return RequestRejected('cancellation request not accepted', value['source_code'])
+            return RequestSucceeded()
+        logger.warning('Native cancellation not accepted: source_code=%s', value['source_code'])
+        return RequestRejected('cancellation request not accepted')

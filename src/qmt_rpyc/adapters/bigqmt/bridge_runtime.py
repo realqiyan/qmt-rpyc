@@ -4,6 +4,7 @@ The packaging helper embeds financial_wire beside this module. All business
 calls execute on the thread that created StrategyRuntime, never an I/O worker.
 """
 import math
+import logging
 from datetime import datetime
 import threading
 
@@ -69,6 +70,53 @@ class StrategyRuntime:
             raise NotImplementedError('required strategy method is absent')
         return method(*args, **kwargs)
 
+    def _ticks(self, selectors):
+        source = self._context('get_full_tick', selectors)
+        if not isinstance(source, dict):
+            raise ValueError('native ticks must be code-keyed')
+        result = dict(source)
+        missing = [code for code in selectors
+                   if code.endswith(('.SHO', '.SZO')) and code not in source]
+        # Deployed QMT omits explicit options from get_full_tick. Its tick
+        # DataFrame supplies the original timestamp and full five-level book.
+        # subscribe=False returns empty frames for a cold option on this build.
+        for offset in range(0, len(missing), 16):
+            codes = missing[offset:offset + 16]
+            try:
+                tables = self._context('get_market_data_ex', fields=[], stock_code=codes,
+                    period='tick', count=1, dividend_type='none', fill_data=False, subscribe=True)
+                if not isinstance(tables, dict):
+                    raise ValueError('native option ticks must be code-keyed')
+            except Exception:
+                logging.getLogger(__name__).warning('Option tick read failed for %s', codes, exc_info=True)
+                continue
+            for code in codes:
+                if code not in tables:
+                    continue
+                try:
+                    table = frame(tables[code])
+                    if not table['data']:
+                        continue
+                    if len(table['data']) != 1 or len(set(table['columns'])) != len(table['columns']):
+                        raise ValueError('ambiguous latest option tick')
+                    result[code] = dict(zip(table['columns'], table['data'][0]))
+                except Exception:
+                    logging.getLogger(__name__).warning('Invalid option tick frame for %s', code, exc_info=True)
+        return result
+
+    def _option_record(self, code):
+        try:
+            row = self._context('get_option_detail_data', code)
+            if isinstance(row, dict) and row:
+                row = dict(row)
+                # Bundle the supplemental identity/name in the existing bounded
+                # read. Old service builds ignore this private extra field.
+                row['_instrument'] = self._context('get_instrumentdetail', code)
+            return row
+        except Exception:
+            logging.getLogger(__name__).warning('Option record read failed for %s', code, exc_info=True)
+            return {'_read_error': True}
+
     def dispatch(self, operation, args):
         if threading.get_ident() != self.owner_thread:
             raise RuntimeError('QMT reads must execute on the strategy thread')
@@ -106,7 +154,7 @@ class StrategyRuntime:
             if len(args['codes']) > 16:
                 raise ValueError('native read group exceeds 16 items')
             if operation == 'option_details':
-                result = {code: self._context('get_option_detail_data', code) for code in args['codes']}
+                result = {code: self._option_record(code) for code in args['codes']}
             else:
                 result = {code: self._context('get_weight_in_index', args['index'], code) for code in args['codes']}
         elif operation == 'sector_nodes':
@@ -123,7 +171,7 @@ class StrategyRuntime:
             selectors = args['selectors']
             if not isinstance(selectors, list) or not selectors or len(selectors) > 500:
                 raise ValueError('tick selectors must be bounded and nonempty')
-            result = self._context('get_full_tick', selectors)
+            result = self._ticks(selectors)
         elif operation == 'daily_bars':
             if not isinstance(args['codes'], list) or not args['codes'] or len(args['codes']) > 500:
                 raise ValueError('daily codes must be bounded and nonempty')

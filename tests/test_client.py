@@ -22,7 +22,7 @@ class Root:
 
     def negotiate(self, digest):
         assert digest == CONTRACT_HASH
-        return dumps({"contract_version": 4, "contract_hash": CONTRACT_HASH,
+        return dumps({"contract_version": 7, "contract_hash": CONTRACT_HASH,
                       "capabilities": Capabilities({op: Capability(True, "fake", None) for op in OPERATIONS})})
 
     def call(self, payload):
@@ -31,7 +31,7 @@ class Root:
         result = self.callback(request)
         if isinstance(result, str):
             return result
-        return dumps(dict(contract_version=4, request_id=request["request_id"], operation=request["operation"], status="ok", data=result))
+        return dumps(dict(contract_version=7, request_id=request["request_id"], operation=request["operation"], status="ok", data=result))
 
 
 def client(callback):
@@ -47,7 +47,7 @@ def test_negotiation_is_explicit_and_does_not_fall_back():
     with pytest.raises(ProtocolError, match="contract negotiation failed"):
         value._negotiate()
     connected = client(lambda request: [])
-    assert connected.contract_version == 4
+    assert connected.contract_version == 7
     assert set(connected.capabilities().operations) == set(OPERATIONS)
 
 
@@ -105,7 +105,7 @@ def test_batch_rejects_reordering_omission_duplication_or_extra_identity(codes):
 @pytest.mark.parametrize("field,bad", [("request_id", "wrong"), ("operation", "wrong"), ("contract_version", 1)])
 def test_read_response_must_match_request_context(field, bad):
     def response(request):
-        envelope = dict(contract_version=4, request_id=request["request_id"], operation=request["operation"], status="ok", data=[])
+        envelope = dict(contract_version=7, request_id=request["request_id"], operation=request["operation"], status="ok", data=[])
         envelope[field] = bad
         return dumps(envelope)
     with pytest.raises(ProtocolError):
@@ -137,9 +137,9 @@ def test_transport_error_preserves_read_vs_mutation_outcome():
 
 def test_known_preexecution_error_is_not_unknown_submission():
     def response(request):
-        error = OperationError("NOT_CONNECTED", "not ready", request["operation"], 4,
+        error = OperationError("NOT_CONNECTED", "not ready", request["operation"], 7,
                                  "pre_execution", "not_executed", request["request_id"])
-        return dumps(dict(contract_version=4, request_id=request["request_id"], operation=request["operation"], status="error", error=error))
+        return dumps(dict(contract_version=7, request_id=request["request_id"], operation=request["operation"], status="error", error=error))
     with pytest.raises(QmtError) as caught:
         client(response).trading.submit_order("a", "600000.SH", "BUY", 100, pricing="LIMIT", price=1)
     assert not isinstance(caught.value, OutcomeUnknownError)
@@ -147,7 +147,7 @@ def test_known_preexecution_error_is_not_unknown_submission():
 
 
 def test_cancel_requires_exactly_one_identity_kind():
-    value = client(lambda request: RequestSucceeded(0))
+    value = client(lambda request: RequestSucceeded())
     for kwargs in ({}, {"order_id": "123", "market": "SH"}, {"market": "SH"}):
         with pytest.raises(ValueError):
             value.trading.cancel_order("account", **kwargs)

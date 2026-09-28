@@ -15,9 +15,9 @@ from qmt_rpyc.adapters.xtquant_2_0_6_1 import conversions as values
 def invoke(service, monkeypatch):
     monkeypatch.setattr(values, 'market_date', lambda: date(2026, 9, 18))
     manifest = codec.loads(service.exposed_negotiate(CONTRACT_HASH))
-    assert manifest['contract_version'] == 4
+    assert manifest['contract_version'] == 7
     def call(operation, **payload):
-        wire = codec.dumps(dict(contract_version=4, request_id='test-request', operation=operation, payload=payload))
+        wire = codec.dumps(dict(contract_version=7, request_id='test-request', operation=operation, payload=payload))
         response = codec.loads(service.exposed_call(wire))
         assert response['request_id'] == 'test-request'
         return response
@@ -265,7 +265,7 @@ def test_alternative_provider_uses_identical_contract_without_sdk():
     from qmt_rpyc.contracts.system import Capabilities, Capability
     class AlternativeTrading:
         def get_asset(self, request):
-            return Asset(request.account, 2, 12.5, 0.0, 0.0, 12.5)
+            return Asset(request.account, 12.5, 0.0, 0.0, 12.5)
         def list_positions(self, request): return ()
         def list_orders(self, request): return ()
         def submit_order(self, request): raise AssertionError('unsupported')
@@ -281,7 +281,7 @@ def test_alternative_provider_uses_identical_contract_without_sdk():
     providers = Providers(unavailable, unavailable, unavailable, unavailable, unavailable,
                           AlternativeTrading(), unavailable, capabilities)
     dispatcher = Dispatcher(providers)
-    request = dict(contract_version=4, request_id='alternate', operation='trading.get_asset', payload={'account': 'test'})
+    request = dict(contract_version=7, request_id='alternate', operation='trading.get_asset', payload={'account': 'test'})
     result = codec.loads(dispatcher.call(codec.dumps(request)))
     assert codec.decode(OPERATIONS['trading.get_asset'].response_type, result['data']).cash == 12.5
     request.update(operation='reference.list_sectors', payload={})

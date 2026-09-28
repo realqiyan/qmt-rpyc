@@ -22,7 +22,6 @@ def test_pricing_survives_socket_submission_and_query(mock_server, pricing, sour
             pricing=pricing, price=price, correlation_ref='pricing-test')
         order = next(o for o in client.trading.list_orders('ACC1') if o.order_id == submitted.order_id)
         assert order.pricing == pricing
-        assert order.source_price_type == source_type
         assert order.submitted_price == (price if price is not None else 0)
         assert order.side == side and order.requested_quantity == 100
         assert order.correlation_ref == 'pricing-test'
@@ -71,14 +70,14 @@ def test_bad_pricing_constant_disables_trading_capabilities(service, constant, v
         assert constant in capability.reason
 
 
-def test_unknown_query_pricing_preserves_source_code(service):
+def test_unknown_query_pricing_remains_unknown(service):
     from qmt_rpyc.contracts.trading import OrdersRequest
     source = service._dispatcher.providers.trading.b
     trader = source.environment.connection._trader
     trader._orders[123] = dict(stock_code='510300.SH', order_type=23,
                               order_volume=100, price_type=999, price=0)
     order = service._dispatcher.providers.trading.list_orders(OrdersRequest('ACC1'))[0]
-    assert order.pricing == 'UNKNOWN' and order.source_price_type == 999
+    assert order.pricing == 'UNKNOWN'
 
 
 @pytest.mark.parametrize('side,source_side', [('BUY', 23), ('SELL', 24)])
@@ -90,7 +89,7 @@ def test_latest_price_preserves_legacy_sdk_arguments(service, monkeypatch, side,
         return 123
     monkeypatch.setattr(adapter.b, 'call', capture)
     result = adapter.submit_order(OrderRequest(
-        'ACC1', '510300.SH', side, 100, 'LATEST_PRICE', 4.131, 'strategy', 'ref'))
+        'ACC1', '510300.SH', side, 100, 'LATEST_PRICE', 4.131, 'ref'))
     assert result.order_id == '123'
     assert calls == [('trader.order_stock', 'ACC1', '510300.SH', source_side,
-                      100, 5, 4.131, 'strategy', 'ref')]
+                      100, 5, 4.131, '', 'ref')]

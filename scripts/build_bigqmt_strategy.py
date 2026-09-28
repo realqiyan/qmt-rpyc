@@ -2,6 +2,7 @@
 """Build a standalone Python 3.6 QMT strategy from the owned bridge modules."""
 import argparse
 import ast
+import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +29,7 @@ def init(ContextInfo):
     except Exception:
         stop(ContextInfo)
         raise
-    print("QMT_RPYC_BRIDGE ready; read_only=False; protocol=" + str(BRIDGE_VERSION))
+    print("QMT_RPYC_BRIDGE ready; version=" + RELEASE_VERSION + "; build=" + STRATEGY_BUILD + "; read_only=False")
 
 
 def bigqmt_bridge_pump(ContextInfo):
@@ -59,6 +60,16 @@ def build():
             if isinstance(node, ast.ImportFrom) and node.level:
                 del lines[node.lineno - 1:node.end_lineno]
         parts.append('\n# ---- ' + name + ' ----\n' + ''.join(lines))
+    version_tree = ast.parse((ROOT / 'src/qmt_rpyc/version.py').read_text(encoding='utf-8'))
+    version = next(ast.literal_eval(node.value) for node in version_tree.body
+                   if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == '__version__'
+                           for target in node.targets))
+    parts.insert(1, 'RELEASE_VERSION = ' + repr(version) + '\n')
+    source = '\n'.join(parts) + ENTRY
+    # Deterministic fingerprint of the generated source before adding itself.
+    digest = hashlib.sha256(source.encode('gbk')).hexdigest()[:16]
+    parts.insert(2, 'STRATEGY_BUILD = ' + repr(digest) + '\n')
     source = '\n'.join(parts) + ENTRY
     ast.parse(source, feature_version=(3, 6))
     return source

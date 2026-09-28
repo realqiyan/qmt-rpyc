@@ -58,7 +58,7 @@ from qmt_rpyc.contracts.trading import (
 
 from .schema import schema
 
-CONTRACT_VERSION = 4
+CONTRACT_VERSION = 7
 
 
 @dataclass(frozen=True)

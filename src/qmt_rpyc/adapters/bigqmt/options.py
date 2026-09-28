@@ -99,13 +99,19 @@ class OptionsAdapter:
             return tuple(pool.map(getter, codes))
 
     def get_contract_details(self, r: CodesRequest) -> BatchResult[OptionContract]:
+        if not r.codes:
+            return BatchResult(())
+        grouped = getattr(self.reader, 'get_contract_records', None)
+        rows = _read(grouped, r.codes) if grouped is not None else None
         def one(code):
             try:
-                row = _read(self.reader.get_option_detail, code)
+                row = rows[code] if rows is not None else _read(self.reader.get_option_detail, code)
+                if isinstance(row, Mapping) and row.get('_read_error') is True:
+                    raise ItemFailure('SOURCE_ERROR', 'source option record read failed')
                 if row is None or row == {}:
                     raise ItemFailure('NOT_FOUND', 'source returned no option')
                 _identity(code, row)
-                instrument = _read(self.reader.get_instrument_detail, code)
+                instrument = row['_instrument'] if '_instrument' in row else _read(self.reader.get_instrument_detail, code)
                 if instrument is None or instrument == {}:
                     raise ItemFailure('MISSING_RESULT', 'option name unavailable')
                 _identity(code, instrument)

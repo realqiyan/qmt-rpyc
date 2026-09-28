@@ -51,6 +51,9 @@ class StrategyReader:
     def get_option_details(self, codes):
         return self._read_groups('option_details', 'codes', codes)
 
+    def get_contract_records(self, codes):
+        return self.get_option_details(codes)
+
     def get_index_weights(self, index, codes):
         return self._read_groups('index_weights', 'codes', codes, index=index)
 

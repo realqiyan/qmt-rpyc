@@ -88,3 +88,15 @@ def test_standalone_strategy_is_python36_and_has_no_package_dependency(tmp_path)
     namespace = {'__name__': 'generated_strategy'}
     exec(compile(tree, str(target), 'exec'), namespace)
     assert namespace['_service'] is None
+    from qmt_rpyc.version import __version__
+    import hashlib
+    assert namespace['RELEASE_VERSION'] == __version__
+    from qmt_rpyc.contracts.operations import CONTRACT_VERSION
+    assert namespace['BRIDGE_VERSION'] == CONTRACT_VERSION == int(__version__.split('.')[1])
+    build = namespace['STRATEGY_BUILD']
+    source = raw.decode('gbk')
+    original = source.replace("STRATEGY_BUILD = " + repr(build) + "\n\n", "", 1)
+    assert build == hashlib.sha256(original.encode('gbk')).hexdigest()[:16]
+    assert 'strategy_revision=' not in source
+    assert 'bridge_protocol=' not in source
+    assert 'version=' in source and 'build=' in source

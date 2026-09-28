@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0] - 2026-09-28
+
+- Align public contract and private BigQMT bridge compatibility identifiers at 7. Upgrade clients, service and strategy together.
+- Use the package release version for strategy startup identification, with a deterministic source fingerprint instead of ad hoc revision labels. Keep wire compatibility identifiers unchanged.
+
+- Batch complete option records and native names in groups of 16, reducing a 22-contract chain from 44 pipe exchanges to two while preserving per-item failures.
+- Recover explicit BigQMT option quotes omitted by get_full_tick through bounded latest-tick reads, preserving timestamps and five-level books. Add deployed-data replay and full-chain live acceptance tests.
+
+- Simplify the trading contract (v7): remove native account/order/pricing codes, auxiliary position quantities, strategy names and submission/cancellation source codes. Retain raw order status, business status, correlation remarks and both cancellation identities.
+- Keep native xtquant calling conventions, using an empty strategy-name argument while preserving correlation remarks and non-retryable unknown outcomes. The private BigQMT protocol is v7.
+- Coordinate a-trader/a-options dependency and startup pins; migrate a-trader to daily-only capabilities and contract v7. Install matching client/server builds.
+
 ## [0.6.0] - 2026-09-28
 
 - Add an independent full-QMT adapter, with a GBK Python 3.6 strategy bridge and bounded Windows named-pipe transport. Include the generated strategy and BigQMT installer/start wrappers in the Windows release bundle. The default MiniQMT adapter remains available.

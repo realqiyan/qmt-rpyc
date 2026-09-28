@@ -49,7 +49,7 @@ def setup_bridge(mode='visible'):
 
 
 def request():
-    return OrderRequest(ACCOUNT, '510300.SH', 'BUY', 100, 'LIMIT', .1, 'test', 'marker')
+    return OrderRequest(ACCOUNT, '510300.SH', 'BUY', 100, 'LIMIT', .1, 'marker')
 
 
 def test_native_zero_is_not_identity_and_leading_zero_reference_is_preserved():
@@ -57,7 +57,7 @@ def test_native_zero_is_not_identity_and_leading_zero_reference_is_preserved():
     result = p.submit_order(request())
     assert result.order_id == '0000123'
     assert len(calls) == 1
-    assert calls[0][:10] == (23, 1101, ACCOUNT, '510300.SH', 11, .1, 100, 'test', 2, 'marker')
+    assert calls[0][:10] == (23, 1101, ACCOUNT, '510300.SH', 11, .1, 100, '', 2, 'marker')
     assert p.list_orders(OrdersRequest(ACCOUNT))[0].pricing == 'UNKNOWN'
     with pytest.raises(ProviderError) as error:
         p.submit_order(request())
@@ -77,7 +77,7 @@ def test_unknown_submission_is_never_retried(mode):
 def test_observed_rejection_uses_order_evidence():
     p, *_ = setup_bridge('rejected')
     result = p.submit_order(request())
-    assert result.status == 'rejected' and result.source_code == 57
+    assert result.status == 'rejected'
 
 
 def test_asset_and_order_identity_translation():
@@ -87,7 +87,7 @@ def test_asset_and_order_identity_translation():
     rows.append(order(m_nOpType=2147483647))
     value = p.list_orders(OrdersRequest(ACCOUNT))[0]
     assert value.order_id == '0000123' and value.exchange_order_id == 'SYS-A7'
-    assert value.side == 'UNKNOWN' and value.source_price_type == 55
+    assert value.side == 'UNKNOWN'
     assert value.submitted_at.utcoffset().total_seconds() == 28800
 
 
@@ -96,7 +96,7 @@ def test_cancel_resolves_exact_sysid_and_only_reports_request_acceptance(target)
     p, rows, calls, api, runtime = setup_bridge()
     rows.append(order())
     result = p.cancel_order(CancelRequest(ACCOUNT, target))
-    assert result.status == 'succeeded' and result.source_code == 1
+    assert result.status == 'succeeded'
     assert calls[0][:3] == ('SYS-A7', ACCOUNT, 'STOCK')
 
 
@@ -140,7 +140,7 @@ def test_expired_preflight_does_not_submit():
 
 def test_latest_sell_native_arguments_and_unavailable_account_prevent_writes():
     p, rows, calls, api, runtime = setup_bridge('invisible')
-    r = OrderRequest(ACCOUNT, '510300.SH', 'SELL', 100, 'LATEST_PRICE', None, '', 'sell-marker')
+    r = OrderRequest(ACCOUNT, '510300.SH', 'SELL', 100, 'LATEST_PRICE', None, 'sell-marker')
     with pytest.raises(ProviderError) as e:
         p.submit_order(r)
     assert e.value.outcome == 'unknown'
