@@ -24,8 +24,6 @@ from qmt_rpyc.contracts.instruments import Instrument, TradingReference
 from qmt_rpyc.contracts.market import (
     DailyBarSeries,
     DailyBarsQuery,
-    IntradayBarSeries,
-    IntradayBarsQuery,
     MarketTicks,
     MarketTicksRequest,
     Tick,
@@ -60,7 +58,7 @@ from qmt_rpyc.contracts.trading import (
 
 from .schema import schema
 
-CONTRACT_VERSION = 2
+CONTRACT_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -82,7 +80,6 @@ OPERATIONS = {
     "market.get_ticks": Operation(CodesRequest, BatchResult[Tick]),
     "market.get_market_ticks": Operation(MarketTicksRequest, MarketTicks),
     "market.get_daily_bars": Operation(DailyBarsQuery, BatchResult[DailyBarSeries]),
-    "market.get_intraday_bars": Operation(IntradayBarsQuery, BatchResult[IntradayBarSeries]),
     "market.get_trading_dates": Operation(TradingDatesRequest, Tuple[date, ...]),
     "reference.get_dividend_events": Operation(DividendQuery, Tuple[DividendEvent, ...]),
     "reference.get_index_weights": Operation(IndexWeightsRequest, IndexWeights),
@@ -110,7 +107,7 @@ def manifest():
         "max_codes": MAX_CODES,
         "semantics": {
             "identity": "opaque; preserve broker suffix; no whitespace normalization",
-            "date_range": "inclusive; daily/date; intraday/aware instant",
+            "date_range": "inclusive; daily bars and history downloads use dates; daily period only",
             "count": "positive; mutually exclusive with start; None means all in range",
             "expiry": "Shanghai market date, includes today; current discovery only",
             "batch": "one result per requested code, same order; no hidden retries",

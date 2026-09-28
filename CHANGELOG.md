@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.0] - 2026-09-28
+
+- Add an independent full-QMT adapter, with a GBK Python 3.6 strategy bridge and bounded Windows named-pipe transport. Include the generated strategy and BigQMT installer/start wrappers in the Windows release bundle. The default MiniQMT adapter remains available.
+- Support STOCK asset, position, order, submission and cancellation operations. Match a unique broker record by correlation remark and validated payload, tolerating the observed local signal row. Preserve source order statuses; cancellation success means a signal was sent, not final broker cancellation. Never replay uncertain writes.
+- Persist the last successful option underlying list and return it during background refresh or refresh failure. Refresh daily, throttle failed refreshes, bound cold waits, and retain a separate five-minute contract-discovery cache. Cache diagnostics expose age and refresh errors.
+- Allow missing trading-reference IsTrading and SettlementPrice values as null; retain false and zero without substitution. BigQMT SettlementPrice is the source previous-settlement field.
+- Upgrade the public contract to v4 (27 operations): daily bars only; remove intraday operations and shareholder financial tables. Retain Balance, Income, CashFlow, Capital and PershareIndex. Clients and servers must upgrade together. Private BigQMT bridge protocol is 4.
+- Add authenticated opt-in read-only native debugging. Group native reads, split whole-market snapshots by market, and reserve a heartbeat connection slot. Download APIs in BigQMT are explicitly compatibility no-ops.
+- Deployment validation covered market/reference/options/core financial queries and simulated order/cancel signals. Source order snapshots remained stale after a broker terminal-state rejection; the release preserves that evidence rather than inventing final status. Long-duration recovery testing remains ongoing.
+
 ## [0.5.1] - 2026-09-25
 
 - Add explicit QMT_XTQUANT_PATH selection and startup diagnostics for loaded SDK modules, resolved junctions and native extensions. Invalid configured SDK paths fail without falling back.

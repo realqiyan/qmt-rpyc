@@ -50,7 +50,7 @@ class InstrumentsAdapter:
             if row is None:
                 return None
             v.verify_identity(code, row)
-            return dict(source_is_trading=row['IsTrading'], previous_close=v.number(row['PreClose']),
-                        settlement_price=v.number(row['SettlementPrice']), upper_limit=v.number(row['UpStopPrice']),
+            return dict(source_is_trading=row.get('IsTrading'), previous_close=v.number(row['PreClose']),
+                        settlement_price=None if row.get('SettlementPrice') is None else v.number(row['SettlementPrice']), upper_limit=v.number(row['UpStopPrice']),
                         lower_limit=v.number(row['DownStopPrice']), price_tick=v.number(row['PriceTick']))
         return self.b.batch(r.codes, TradingReference, one)

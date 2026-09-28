@@ -25,7 +25,6 @@ DEPENDENCIES = {
     'market.get_ticks': ('get_full_tick',),
     'market.get_market_ticks': ('get_full_tick',),
     'market.get_daily_bars': ('get_market_data_ex',),
-    'market.get_intraday_bars': ('get_market_data_ex',),
     'market.get_trading_dates': ('get_trading_dates',),
     'reference.get_dividend_events': ('get_divid_factors',),
     'reference.get_index_weights': ('get_index_weight',),

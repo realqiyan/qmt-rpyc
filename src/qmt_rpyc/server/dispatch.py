@@ -4,6 +4,7 @@ import logging
 from qmt_rpyc.adapters.errors import ProviderError
 from qmt_rpyc.adapters.interfaces import Providers
 from qmt_rpyc.contracts.errors import ProtocolError
+from qmt_rpyc.contracts.operations import CONTRACT_VERSION
 from qmt_rpyc.contracts.system import Capabilities, Capability
 from qmt_rpyc.contracts.validation import validate_result
 from qmt_rpyc.transport import codec
@@ -37,7 +38,7 @@ class Dispatcher:
         if expected_hash != CONTRACT_HASH:
             return codec.dumps({'status': 'error', 'error_type': 'CONTRACT_MISMATCH',
                                 'message': 'manifest hash mismatch'})
-        return codec.dumps(dict(contract_version=2, contract_hash=CONTRACT_HASH,
+        return codec.dumps(dict(contract_version=CONTRACT_VERSION, contract_hash=CONTRACT_HASH,
                                 capabilities=self.capabilities))
 
     def call(self, payload):
@@ -52,7 +53,7 @@ class Dispatcher:
             request_id, operation = envelope['request_id'], envelope['operation']
             if type(request_id) is not str or not request_id or len(request_id) > 128:
                 raise ProtocolError('invalid request ID')
-            if type(envelope['contract_version']) is not int or envelope['contract_version'] != 2:
+            if type(envelope['contract_version']) is not int or envelope['contract_version'] != CONTRACT_VERSION:
                 raise ProtocolError('invalid contract version')
             if type(operation) is not str or operation not in OPERATIONS:
                 raise ProtocolError('unknown operation')
@@ -67,7 +68,7 @@ class Dispatcher:
             phase = 'result_validation'
             result = codec.decode(descriptor.response_type, codec.encode(value))
             validate_result(operation, request, result)
-            return codec.dumps(dict(contract_version=2, request_id=request_id,
+            return codec.dumps(dict(contract_version=CONTRACT_VERSION, request_id=request_id,
                                     operation=operation, status='ok', data=result))
         except ProviderError as exc:
             return self.error(request_id, operation, exc.category,
@@ -85,6 +86,6 @@ class Dispatcher:
 
     @staticmethod
     def error(request_id, operation, category, message, phase, outcome):
-        return codec.dumps(dict(contract_version=2, request_id=request_id, operation=operation, status='error',
+        return codec.dumps(dict(contract_version=CONTRACT_VERSION, request_id=request_id, operation=operation, status='error',
                                 error=dict(error_type=category, message=message, operation=operation,
-                                           contract_version=2, phase=phase, outcome=outcome, request_id=request_id)))
+                                           contract_version=CONTRACT_VERSION, phase=phase, outcome=outcome, request_id=request_id)))

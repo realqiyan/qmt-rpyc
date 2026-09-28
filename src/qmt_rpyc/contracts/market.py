@@ -5,10 +5,7 @@ from typing import Literal, Optional, Tuple, Union
 
 from .common import Failure, Success, validate_codes, validate_window
 
-Period = Literal["1m", "5m", "15m", "30m", "1h", "1d"]
-
-
-IntradayPeriod = Literal["1m", "5m", "15m", "30m", "1h"]
+Period = Literal["1d"]
 
 
 Adjustment = Literal["none", "front", "back", "front_ratio", "back_ratio"]
@@ -62,40 +59,12 @@ class DailyBar:
 
 
 @dataclass(frozen=True)
-class IntradayBar:
-    bar_at: datetime
-    source_time: Optional[datetime]
-    open: Optional[float]
-    high: Optional[float]
-    low: Optional[float]
-    close: Optional[float]
-    previous_close: Optional[float]
-    volume: int
-    turnover: float
-    open_interest: int
-    source_suspension_flag: int
-    settlement_price: float
-
-
-@dataclass(frozen=True)
 class DailyBarSeries:
     rows: Tuple[DailyBar, ...]
     adjustment: Adjustment
 
     def __post_init__(self):
         dates = [row.trade_date for row in self.rows]
-        if dates != sorted(set(dates)):
-            raise ValueError("bar times must be strictly increasing")
-
-
-@dataclass(frozen=True)
-class IntradayBarSeries:
-    rows: Tuple[IntradayBar, ...]
-    period: IntradayPeriod
-    adjustment: Adjustment
-
-    def __post_init__(self):
-        dates = [row.bar_at for row in self.rows]
         if dates != sorted(set(dates)):
             raise ValueError("bar times must be strictly increasing")
 
@@ -114,21 +83,6 @@ class DailyBarsQuery:
     codes: Tuple[str, ...]
     start: Optional[date] = None
     end: Optional[date] = None
-    count: Optional[int] = None
-    adjustment: Adjustment = "none"
-    fill_data: bool = True
-
-    def __post_init__(self):
-        validate_codes(self.codes)
-        validate_window(self.start, self.end, self.count)
-
-
-@dataclass(frozen=True)
-class IntradayBarsQuery:
-    codes: Tuple[str, ...]
-    period: IntradayPeriod
-    start: Optional[datetime] = None
-    end: Optional[datetime] = None
     count: Optional[int] = None
     adjustment: Adjustment = "none"
     fill_data: bool = True

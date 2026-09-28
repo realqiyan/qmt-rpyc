@@ -123,6 +123,21 @@ def test_financial_all_tables_have_selected_fields_and_unrequested_none():
     assert len(manifest()["operations"]["financials.get_reports"]["response"]["fields"]) > 0
 
 
+@pytest.mark.parametrize('table', ['HolderNum', 'Top10Holder', 'Top10FlowHolder'])
+def test_removed_shareholder_tables_rejected_by_query_and_download_contracts(table):
+    import json
+    from dataclasses import fields
+    from qmt_rpyc.contracts.financials import FinancialQuery
+    from qmt_rpyc.contracts.downloads import FinancialDownloadRequest
+    for model in (FinancialQuery, FinancialDownloadRequest):
+        with pytest.raises(ValueError, match='unsupported financial table'):
+            model(('000001.SZ',), tables=(table,))
+        with pytest.raises((ValueError, TypeError)):
+            decode(model, {'codes': ['000001.SZ'], 'tables': [table]})
+    assert table not in json.dumps(manifest())
+    assert tuple(field.name for field in fields(FinancialReports)) == FINANCIAL_TABLES
+
+
 @pytest.mark.parametrize("kwargs", [dict(count=0), dict(count=-1), dict(count=True),
                                    dict(start=date(2026, 9, 24), count=3),
                                    dict(start=date(2026, 9, 24), end=date(2026, 9, 23))])
@@ -138,7 +153,7 @@ def test_duplicate_and_excess_codes_are_rejected_but_empty_is_valid():
             CodesRequest(codes)
 
 
-def test_download_period_enforces_date_or_instant_boundaries():
+def test_history_download_requires_daily_period_and_date_boundaries():
     with pytest.raises(ValueError):
         HistoryDownloadRequest("510050.SH", "1m", date(2026, 9, 24))
     with pytest.raises(ValueError):
@@ -154,8 +169,15 @@ def test_task_failure_is_not_inferred_from_null_result():
 
 
 def test_registry_covers_all_groups_and_all_mutations_include_downloads():
-    assert len(OPERATIONS) == 28
+    assert len(OPERATIONS) == 27
     assert len(CONTRACT_HASH) == 64
     assert all(operation.mutation for name, operation in OPERATIONS.items() if name.startswith("downloads.start_"))
     assert not OPERATIONS["downloads.get_task"].mutation
     assert manifest() == manifest()
+
+
+def test_trading_reference_nullable_source_facts_roundtrip():
+    from qmt_rpyc.contracts.instruments import TradingReference
+    from qmt_rpyc.transport.codec import decode, encode
+    value = TradingReference(None, 1.0, None, 1.1, .9, .01)
+    assert decode(TradingReference, encode(value)) == value

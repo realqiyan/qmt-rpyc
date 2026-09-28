@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 from typing import Tuple
 
 from qmt_rpyc.adapters.errors import ItemFailure
@@ -6,8 +6,6 @@ from qmt_rpyc.contracts.common import BatchResult, CodesRequest
 from qmt_rpyc.contracts.market import (
     DailyBarSeries,
     DailyBarsQuery,
-    IntradayBarSeries,
-    IntradayBarsQuery,
     MarketTicks,
     MarketTicksRequest,
     Tick,
@@ -68,17 +66,11 @@ class MarketAdapter:
         return self._ticks(r.markets, market=True)
 
     def get_daily_bars(self, r: DailyBarsQuery) -> BatchResult[DailyBarSeries]:
-        return self._bars(r, '1d')
-
-    def get_intraday_bars(self, r: IntradayBarsQuery) -> BatchResult[IntradayBarSeries]:
-        return self._bars(r, r.period)
-
-    def _bars(self, r, period):
         if not r.codes:
             return BatchResult(())
-        start, end = v.sdk_range(r.start, r.end, period != '1d')
+        start, end = v.sdk_range(r.start, r.end)
         fields = BAR_FIELDS
-        source = self.b.call('get_market_data_ex', fields, list(r.codes), period,
+        source = self.b.call('get_market_data_ex', fields, list(r.codes), '1d',
                             start, end, r.count if r.count is not None else -1,
                             r.adjustment, r.fill_data)
         if not isinstance(source, dict) or set(source) - set(r.codes):
@@ -90,7 +82,7 @@ class MarketAdapter:
             records = []
             previous = None
             for index, row in v.rows(table):
-                stamp = v.day(index) if period == '1d' else datetime.strptime(str(index), '%Y%m%d%H%M%S').replace(tzinfo=v.SHANGHAI).astimezone(v.UTC)
+                stamp = v.day(index)
                 if previous is not None and stamp <= previous:
                     raise ValueError('bars must have unique increasing timestamps')
                 previous = stamp
@@ -100,13 +92,11 @@ class MarketAdapter:
                               settlement_price=v.number(row['settelementPrice']))
                 for old, new in [('open', 'open'), ('high', 'high'), ('low', 'low'), ('close', 'close'), ('preClose', 'previous_close')]:
                     record[new] = None if row[old] is None else v.number(row[old])
-                record['trade_date' if period == '1d' else 'bar_at'] = stamp
+                record['trade_date'] = stamp
                 records.append(record)
             result = dict(rows=records, adjustment=r.adjustment)
-            if period != '1d':
-                result['period'] = period
             return result
-        return self.b.batch(r.codes, DailyBarSeries if period == '1d' else IntradayBarSeries, one)
+        return self.b.batch(r.codes, DailyBarSeries, one)
 
     def get_trading_dates(self, r: TradingDatesRequest) -> Tuple[date, ...]:
         start, end = v.sdk_range(r.start, r.end)

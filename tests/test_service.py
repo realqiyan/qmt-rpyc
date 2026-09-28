@@ -15,9 +15,9 @@ from qmt_rpyc.adapters.xtquant_2_0_6_1 import conversions as values
 def invoke(service, monkeypatch):
     monkeypatch.setattr(values, 'market_date', lambda: date(2026, 9, 18))
     manifest = codec.loads(service.exposed_negotiate(CONTRACT_HASH))
-    assert manifest['contract_version'] == 2
+    assert manifest['contract_version'] == 4
     def call(operation, **payload):
-        wire = codec.dumps(dict(contract_version=2, request_id='test-request', operation=operation, payload=payload))
+        wire = codec.dumps(dict(contract_version=4, request_id='test-request', operation=operation, payload=payload))
         response = codec.loads(service.exposed_call(wire))
         assert response['request_id'] == 'test-request'
         return response
@@ -44,7 +44,6 @@ def test_all_read_capabilities_have_typed_results(invoke):
         'market.get_ticks': {'codes': ['600000.SH']},
         'market.get_market_ticks': {'markets': ['SH']},
         'market.get_daily_bars': {'codes': ['600000.SH'], 'count': 2},
-        'market.get_intraday_bars': {'codes': ['600000.SH'], 'period': '1m', 'count': 2},
         'market.get_trading_dates': {'market': 'SH'},
         'reference.get_dividend_events': {'code': '600000.SH'},
         'reference.get_index_weights': {'index': '000300.SH'},
@@ -188,12 +187,40 @@ def test_supplemental_source_failure_is_per_instrument(invoke, service, monkeypa
     assert batch.items[1].error.error_type == 'SOURCE_ERROR'
 
 
-def test_fractional_download_boundary_rejected_before_submission(invoke, service, monkeypatch):
+@pytest.mark.parametrize('period', ['1m', '5m', '15m', '30m', '1h'])
+def test_intraday_download_rejected_before_submission(invoke, service, monkeypatch, period):
     monkeypatch.setattr(service.__class__._download_mgr, 'submit', lambda *a, **kw: pytest.fail('submitted'))
-    result = invoke('downloads.start_history', code='600000.SH', period='1m',
-                    start=datetime(2026, 9, 18, 1, 30, 0, 1, tzinfo=timezone.utc))
+    result = invoke('downloads.start_history', code='600000.SH', period=period)
     assert result['error']['outcome'] == 'not_executed'
     assert result['error']['error_type'] == 'INVALID_ARGUMENTS'
+
+
+def test_old_contract_and_removed_operation_do_not_execute(service):
+    old_hash = 'ce5ba31ec0d948354590569d375b99d474fe60c045130f5875ac151674010a4c'
+    assert codec.loads(service.exposed_negotiate(old_hash))['error_type'] == 'CONTRACT_MISMATCH'
+    for version, operation in [(2, 'market.get_daily_bars'), (4, 'market.get_intraday_bars')]:
+        wire = codec.dumps(dict(contract_version=version, request_id='old-contract',
+                                operation=operation, payload={'codes': ['600000.SH'], 'count': 2}))
+        result = codec.loads(service.exposed_call(wire))
+        assert result['error']['phase'] == 'pre_execution'
+        assert result['error']['outcome'] == 'not_executed'
+
+
+def test_daily_bar_boundaries_and_source_time_are_preserved(invoke, service, monkeypatch):
+    sdk = service._dispatcher.providers.market.b.environment.xtdata
+    original = sdk.get_market_data_ex
+    calls = []
+    def bars(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(sdk, 'get_market_data_ex', bars)
+    result = value(invoke, 'market.get_daily_bars', codes=['600000.SH'],
+                   start=date(2026, 9, 17), end=date(2026, 9, 18))
+    params = calls[0][1]
+    assert (params['period'], params['start_time'], params['end_time'], params['count']) == ('1d', '20260917', '20260918', -1)
+    rows = result.require_all()['600000.SH'].rows
+    assert rows and type(rows[0].trade_date) is date
+    assert rows[0].source_time.tzinfo == timezone.utc
 
 
 def test_future_calendar_is_not_reported_as_known_empty(invoke):
@@ -254,7 +281,7 @@ def test_alternative_provider_uses_identical_contract_without_sdk():
     providers = Providers(unavailable, unavailable, unavailable, unavailable, unavailable,
                           AlternativeTrading(), unavailable, capabilities)
     dispatcher = Dispatcher(providers)
-    request = dict(contract_version=2, request_id='alternate', operation='trading.get_asset', payload={'account': 'test'})
+    request = dict(contract_version=4, request_id='alternate', operation='trading.get_asset', payload={'account': 'test'})
     result = codec.loads(dispatcher.call(codec.dumps(request)))
     assert codec.decode(OPERATIONS['trading.get_asset'].response_type, result['data']).cash == 12.5
     request.update(operation='reference.list_sectors', payload={})

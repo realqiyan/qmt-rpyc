@@ -5,10 +5,10 @@ from typing import Literal, Optional, Tuple
 
 from .common import validate_codes, validate_window
 
-FinancialTable = Literal["Balance", "Income", "CashFlow", "Capital", "HolderNum", "Top10Holder", "Top10FlowHolder", "PershareIndex"]
+FinancialTable = Literal["Balance", "Income", "CashFlow", "Capital", "PershareIndex"]
 
 
-FINANCIAL_TABLES = ("Balance", "Income", "CashFlow", "Capital", "HolderNum", "Top10Holder", "Top10FlowHolder", "PershareIndex")
+FINANCIAL_TABLES = ("Balance", "Income", "CashFlow", "Capital", "PershareIndex")
 
 
 @dataclass(frozen=True)
@@ -54,36 +54,6 @@ class CapitalRecord:
 
 
 @dataclass(frozen=True)
-class HolderNumRecord:
-    declareDate: date
-    endDate: date
-    shareholder: Optional[float]
-    shareholderA: Optional[float]
-    shareholderB: Optional[float]
-    shareholderH: Optional[float]
-    shareholderFloat: Optional[float]
-    shareholderOther: Optional[float]
-
-
-@dataclass(frozen=True)
-class Top10HolderRecord:
-    declareDate: date
-    endDate: date
-    quantity: Optional[float]
-    ratio: Optional[float]
-    rank: Optional[float]
-
-
-@dataclass(frozen=True)
-class Top10FlowHolderRecord:
-    declareDate: date
-    endDate: date
-    quantity: Optional[float]
-    ratio: Optional[float]
-    rank: Optional[float]
-
-
-@dataclass(frozen=True)
 class PershareIndexRecord:
     m_timetag: date
     m_anntime: date
@@ -101,9 +71,6 @@ class FinancialReports:
     Income: Optional[Tuple[IncomeRecord, ...]]
     CashFlow: Optional[Tuple[CashFlowRecord, ...]]
     Capital: Optional[Tuple[CapitalRecord, ...]]
-    HolderNum: Optional[Tuple[HolderNumRecord, ...]]
-    Top10Holder: Optional[Tuple[Top10HolderRecord, ...]]
-    Top10FlowHolder: Optional[Tuple[Top10FlowHolderRecord, ...]]
     PershareIndex: Optional[Tuple[PershareIndexRecord, ...]]
 
 
@@ -118,5 +85,7 @@ class FinancialQuery:
     def __post_init__(self):
         validate_codes(self.codes)
         validate_window(self.start, self.end)
+        if any(table not in FINANCIAL_TABLES for table in self.tables):
+            raise ValueError("unsupported financial table")
         if not self.tables or len(set(self.tables)) != len(self.tables):
             raise ValueError("financial tables must be nonempty and unique")

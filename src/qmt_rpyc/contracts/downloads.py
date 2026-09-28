@@ -1,7 +1,7 @@
 """Downloads requests and results."""
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Literal, Optional, Tuple, Union
+from typing import Literal, Optional, Tuple
 
 from .common import (
     OperationError,
@@ -60,15 +60,16 @@ class DownloadStatus:
 class HistoryDownloadRequest:
     code: str
     period: Period
-    start: Optional[Union[date, datetime]] = None
-    end: Optional[Union[date, datetime]] = None
+    start: Optional[date] = None
+    end: Optional[date] = None
 
     def __post_init__(self):
         validate_identity(self.code, "code")
-        expected = date if self.period == "1d" else datetime
+        if self.period != "1d":
+            raise ValueError("only daily history downloads are supported")
         for boundary in (self.start, self.end):
-            if boundary is not None and type(boundary) is not expected:
-                raise ValueError("daily download requires dates; intraday requires aware instants")
+            if boundary is not None and type(boundary) is not date:
+                raise ValueError("daily download requires dates")
         validate_window(self.start, self.end)
 
 
@@ -82,6 +83,8 @@ class FinancialDownloadRequest:
     def __post_init__(self):
         validate_codes(self.codes)
         validate_window(self.start, self.end)
+        if any(table not in FINANCIAL_TABLES for table in self.tables):
+            raise ValueError("unsupported financial table")
         if not self.tables or len(set(self.tables)) != len(self.tables):
             raise ValueError("financial tables must be nonempty and unique")
 

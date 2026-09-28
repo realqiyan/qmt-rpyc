@@ -19,8 +19,8 @@ OpenAPI 是描述接口的参考；当前传输使用 RPyC，不提供 HTTP 服�
 
 ## 契约与协商
 
-当前契约标识为整数 `2`；它与包版本、socket 认证协议版本分别管理，不影响 Python 导入路径。
-操作表含 28 个操作，覆盖板块、标的、合约、期权、行情、日历、分红、指数、八类财务表、
+当前契约标识为整数 `3`；它与包版本、socket 认证协议版本分别管理，不影响 Python 导入路径。
+操作表含 27 个操作，覆盖板块、标的、合约、期权、行情、日历、分红、指数、五类核心财务表、
 四种下载、资产、持仓、委托、下单和两类撤单等业务能力。
 
 客户端认证后调用 `negotiate(contract_hash)`，服务端返回 `contract_version`、`contract_hash`
@@ -31,7 +31,7 @@ OpenAPI 是描述接口的参考；当前传输使用 RPyC，不提供 HTTP 服�
 之后唯一稳定业务 RPC 是 `call(payload_json)`。请求字段固定为：
 
 ```json
-{"contract_version":2,"request_id":"unique-id","operation":"market.get_ticks","payload":{"codes":["510050.SH"]}}
+{"contract_version":3,"request_id":"unique-id","operation":"market.get_ticks","payload":{"codes":["510050.SH"]}}
 ```
 
 成功响应携带相同的版本、请求 ID、操作名，以及 `status="ok"` 和 `data`；失败携带
@@ -43,7 +43,7 @@ RPC 只传 JSON 字符串，禁用 pickle 与通用 public attribute 访问。
 Python 模型使用冻结 dataclass；返回序列为 tuple，解码后的 Mapping 不可写。
 解码拒绝多余字段、缺失必需字段、无效联合判别、重复 JSON 键、bool 充当数字、非有限浮点。
 日期为 `date` / `YYYY-MM-DD`；时刻为 aware datetime / UTC 六位微秒 `...000000Z`。
-日线用交易日，分钟线用时刻；源时间另存 `source_time`，不混同 bar 标识。
+K 线及历史行情下载只支持日线，以交易日为边界；源时间另存 `source_time`，不混同 bar 标识。
 服务与 SDK 诊断入口不全局替换标准库 `datetime.datetime`，避免导入顺序导致模型和严格 codec
 持有不同类型。源端数值时间戳在适配器中以 epoch + timedelta 转换。
 CPython [3.10](https://github.com/python/cpython/blob/v3.10.0/Python/pytime.c#L127-L155) 和
@@ -102,7 +102,7 @@ SDK 导入失败、认证配置无效、端口占用是启动错误，不能当�
 后台线程不能强制取消原生调用或隔离 SDK 进程崩溃。行情查询不以 Trader 状态统一门禁，
 桥接没有通用的离线结果缓存或历史完整性判定；SDK 本地有数据也不代表查询区间完整。
 下载管理器虽提供 fail_pending，但未接入独立行情连接状态检测，不能承诺断线自动终止所有排队任务。
-源数量、权重与财务字段保持源端口径，不凭样本全局换算单位；分钟 bar 时间也不推定为区间起点或终点。
+源数量、权重与财务字段保持源端口径，不凭样本全局换算单位。
 
 部署 SDK 的实际能力通过[调试入口](../api/debug.md)查询；RPC 无法启动时使用 Windows 本机
 `qmt-rpyc-server api dump` 导出，不把恢复旧 RPC 作为维护修复的前提。

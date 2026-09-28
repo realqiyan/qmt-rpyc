@@ -13,8 +13,6 @@ from qmt_rpyc.contracts.instruments import Instrument, TradingReference
 from qmt_rpyc.contracts.market import (
     DailyBarSeries,
     DailyBarsQuery,
-    IntradayBarSeries,
-    IntradayBarsQuery,
     MarketTicks,
     MarketTicksRequest,
     Tick,
@@ -56,9 +54,6 @@ class MarketProvider(Protocol):
         ...
 
     def get_daily_bars(self, r: DailyBarsQuery) -> BatchResult[DailyBarSeries]:
-        ...
-
-    def get_intraday_bars(self, r: IntradayBarsQuery) -> BatchResult[IntradayBarSeries]:
         ...
 
     def get_trading_dates(self, r: TradingDatesRequest) -> Tuple[date, ...]:

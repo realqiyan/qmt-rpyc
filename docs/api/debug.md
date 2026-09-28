@@ -1,6 +1,6 @@
 # 原始 SDK 调试入口
 
-用于调查实际券商 SDK 的方法、参数和返回数据。它独立于 28 个稳定业务操作，
+用于调查实际券商 SDK 的方法、参数和返回数据。它独立于 27 个稳定业务操作，
 不进入业务契约指纹，也不承诺源方法或返回类型稳定。Python 和 CLI 调试连接只做
 现有 socket 认证，不进行业务契约协商，所以业务模型不匹配时也能调查服务端。
 
@@ -77,3 +77,14 @@ SDK 执行后的异常、响应无法解析或连接中断均保守报告 `unkno
 日志记录目标方法，不记录完整参数；源异常详情会返回给已认证调试调用方。
 
 验证使用合成 SDK 和本地 RPyC socket；Windows/QMT 的具体方法、回调和传输行为仍以实际部署验证为准。
+
+
+## BigQMT 调试
+
+BigQMT 同样支持 QMT_RPYC_DEBUG=1，需搭配私有协议 4 的策略。
+目标名称使用 context.get_full_tick、global.get_sector_list 等原生名称；
+只允许白名单中的只读方法，不开放交易、下载或任意代码执行。
+方法描述会返回 call_allowed，能描述的方法不一定允许调用。
+bridge.transport、bridge.cache_info、bridge.clear_cache 接受空参数，
+用于连接诊断及期权发现缓存管理。默认关闭，调试连接仍须认证。
+详见 [实机验证说明](../design/bigqmt-readonly-validation.md#缓存心跳与调试)。

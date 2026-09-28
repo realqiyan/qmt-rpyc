@@ -78,6 +78,8 @@ def _load_config(config_path=None):
         "allow_insecure": _env_bool("QMT_RPYC_ALLOW_INSECURE"),
         "debug": _env_bool("QMT_RPYC_DEBUG"),
         "adapter": os.environ.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER),
+        "bigqmt_pipe": os.environ.get("QMT_RPYC_BIGQMT_PIPE", "qmt_rpyc_bridge_v1"),
+        "bigqmt_timeout": _env_int("QMT_RPYC_BIGQMT_TIMEOUT", 30, 1, 120),
         "qmt_path": os.environ.get("QMT_PATH", ""),
         "xtquant_path": os.environ.get("QMT_XTQUANT_PATH", ""),
         "qmt_session_id": _env_int("QMT_SESSION_ID", 1, 0),
@@ -101,7 +103,10 @@ def _load_config(config_path=None):
 
 
 def _validate_config(cfg):
-    select_adapter(cfg.get("adapter", DEFAULT_ADAPTER))
+    adapter = select_adapter(cfg.get("adapter", DEFAULT_ADAPTER))
+    if not adapter.requires_native_sdk:
+        from qmt_rpyc.adapters.bigqmt.winpipe import pipe_path
+        pipe_path(cfg.get("bigqmt_pipe", "qmt_rpyc_bridge_v1"))
     auth_key = cfg.get("auth_key")
     invalid_auth_key = (
         not isinstance(auth_key, str)
@@ -168,10 +173,11 @@ def start_server(cfg, tls=None):
     from rpyc.utils.server import ThreadedServer
 
     adapter = select_adapter(cfg.get("adapter", DEFAULT_ADAPTER))
-    from qmt_rpyc.server.sdk_loader import configured_sdk_path, load_sdk
-    sdk_path = cfg.get("xtquant_path", configured_sdk_path())
-    if sdk_path:
-        load_sdk(sdk_path)
+    if adapter.requires_native_sdk:
+        from qmt_rpyc.server.sdk_loader import configured_sdk_path, load_sdk
+        sdk_path = cfg.get("xtquant_path", configured_sdk_path())
+        if sdk_path:
+            load_sdk(sdk_path)
     ConnectionManager = adapter.connection_type()
     from qmt_rpyc.server.auth_limiter import rate_limiter
     from qmt_rpyc.server.dispatch import Dispatcher
@@ -191,6 +197,9 @@ def start_server(cfg, tls=None):
     listener_socket = None
     interrupted = False
     try:
+        bridge_options = {} if adapter.requires_native_sdk else dict(
+            pipe_name=cfg.get('bigqmt_pipe', 'qmt_rpyc_bridge_v1'),
+            request_timeout=cfg.get('bigqmt_timeout', 30))
         cm = ConnectionManager(
             path=cfg["qmt_path"],
             session_id=cfg["qmt_session_id"],
@@ -199,6 +208,7 @@ def start_server(cfg, tls=None):
             heartbeat_timeout=cfg["heartbeat_timeout"],
             heartbeat_max_failures=cfg["heartbeat_max_failures"],
             reconnect_max_attempts=cfg["reconnect_max_attempts"],
+            **bridge_options,
         )
         dm = DownloadTaskManager(max_workers=2)
 

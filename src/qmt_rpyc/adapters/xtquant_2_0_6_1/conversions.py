@@ -60,18 +60,14 @@ def underlying(row):
     return code if '.' in code else code + '.' + market
 
 
-def sdk_range(start, end, intraday=False):
-    def encode(value, is_end):
+def sdk_range(start, end):
+    def encode(value):
         if value is None:
             return ''
-        if isinstance(value, datetime):
-            if value.tzinfo is None or value.microsecond:
-                raise ValueError('baseline requires aware boundaries with whole-second precision')
-            return value.astimezone(SHANGHAI).strftime('%Y%m%d%H%M%S')
-        if not isinstance(value, date):
+        if type(value) is not date:
             raise ValueError('date boundary required')
-        return value.strftime('%Y%m%d') + (('235959' if is_end else '000000') if intraday else '')
-    return encode(start, False), encode(end, True)
+        return value.strftime('%Y%m%d')
+    return encode(start), encode(end)
 
 
 def rows(table):

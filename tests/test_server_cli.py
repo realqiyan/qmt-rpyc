@@ -15,6 +15,41 @@ def test_default_server_dir_uses_local_app_data(monkeypatch):
     )
 
 
+def test_bigqmt_init_needs_no_sdk_path_account_or_miniqmt(tmp_path, monkeypatch, capsys):
+    target = tmp_path / 'config.env'
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('QMT_RPYC_ADAPTER', 'bigqmt')
+    monkeypatch.delenv('QMT_RPYC_AUTH_KEY', raising=False)
+    def forbidden(*args):
+        pytest.fail('independent BigQMT init must not inspect MiniQMT or wire an SDK')
+    monkeypatch.setattr(cli, 'detect_environment', forbidden)
+    monkeypatch.setattr(cli, 'wire_xtquant', forbidden)
+    monkeypatch.setattr(cli, 'private_ipv4_addresses', lambda: [])
+    args = cli.build_parser().parse_args(['--config', str(target), 'init', '--non-interactive'])
+    cli._cmd_init(args)
+    values = cli._read_env(target)
+    assert values['QMT_RPYC_ADAPTER'] == 'bigqmt'
+    assert not values['QMT_PATH'] and not values['QMT_ACCOUNT_ID']
+    assert not cli._validate_values(values)
+
+
+def test_bigqmt_check_probes_pipe_without_loading_sdk(tmp_path, monkeypatch, capsys):
+    from qmt_rpyc.adapters.bigqmt.connection import ConnectionManager
+    target = tmp_path / 'config.env'
+    target.write_text('QMT_RPYC_ADAPTER=bigqmt\nQMT_RPYC_AUTH_KEY=test-fixture-only\n', encoding='utf-8')
+    def forbidden(*args):
+        pytest.fail('BigQMT check must not inspect MiniQMT or load the SDK')
+    monkeypatch.setattr(cli, 'detect_environment', forbidden)
+    monkeypatch.setattr(cli, 'load_sdk', forbidden)
+    calls = []
+    monkeypatch.setattr(ConnectionManager, 'probe', lambda self: calls.append('probe') or True)
+    args = cli.build_parser().parse_args(['--config', str(target), 'check'])
+    cli._cmd_check(args)  # Python 3.13 on CI still fails the deployment version check.
+    result = json.loads(capsys.readouterr().out)
+    assert calls == ['probe']
+    assert next(check for check in result['checks'] if check['name'] == 'qmt_connection')['ok']
+
+
 def test_validate_values_accepts_short_key_and_rejects_invalid_port():
     errors = cli._validate_values({
         "QMT_RPYC_AUTH_KEY": "short",

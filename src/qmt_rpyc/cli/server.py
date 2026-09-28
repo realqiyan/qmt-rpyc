@@ -82,6 +82,8 @@ def _write_env(path, values):
         ("QMT_RPYC_PORT", values.get("QMT_RPYC_PORT", "18812")),
         ("QMT_RPYC_AUTH_KEY", values.get("QMT_RPYC_AUTH_KEY", "")),
         ("QMT_RPYC_ADAPTER", values.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)),
+        ("QMT_RPYC_BIGQMT_PIPE", values.get("QMT_RPYC_BIGQMT_PIPE", "qmt_rpyc_bridge_v1")),
+        ("QMT_RPYC_BIGQMT_TIMEOUT", values.get("QMT_RPYC_BIGQMT_TIMEOUT", "30")),
         ("QMT_RPYC_DEBUG", values.get("QMT_RPYC_DEBUG", "0")),
         ("QMT_RPYC_ALLOW_INSECURE", values.get("QMT_RPYC_ALLOW_INSECURE", "0")),
         ("QMT_PATH", values.get("QMT_PATH", "")),
@@ -171,7 +173,9 @@ def _cmd_init(args):
     current = _read_env(target)
     values = dict(current)
     values.update(imported)
-    detected = detect_environment()
+    adapter = _selected_adapter(values)
+    values["QMT_RPYC_ADAPTER"] = adapter.name
+    detected = detect_environment() if adapter.requires_native_sdk else {}
     addresses = private_ipv4_addresses()
 
     default_host = (
@@ -229,7 +233,9 @@ def _cmd_init(args):
         values.get("QMT_ACCOUNT_ID")
         or detected.get("account_id") or ""
     )
-    if args.non_interactive:
+    if not adapter.requires_native_sdk:
+        qmt_path, account = values.get("QMT_PATH", ""), values.get("QMT_ACCOUNT_ID", "")
+    elif args.non_interactive:
         qmt_path = args.qmt_path or default_qmt_path
         account = (
             args.account if args.account is not None else default_account
@@ -255,16 +261,16 @@ def _cmd_init(args):
         "QMT_ACCOUNT_ID": account,
     })
     sdk_path = args.xtquant_path if args.xtquant_path is not None else configured_sdk_path(values)
-    if not args.non_interactive and args.xtquant_path is None:
+    if adapter.requires_native_sdk and not args.non_interactive and args.xtquant_path is None:
         sdk_path = input("xtquant package directory (empty uses Python imports) [{}]: ".format(sdk_path)).strip() or sdk_path
-    if sdk_path:
+    if adapter.requires_native_sdk and sdk_path:
         validate_sdk_path(sdk_path)
     values['QMT_XTQUANT_PATH'] = sdk_path
     _write_env(target, values)
 
     wired = False
     xtquant_site = detected.get("xtquant_site")
-    if not sdk_path and xtquant_site and (
+    if adapter.requires_native_sdk and not sdk_path and xtquant_site and (
         args.yes or (
             not args.non_interactive and _confirm(
                 "Wire detected xtquant from {}?".format(xtquant_site),
@@ -290,11 +296,16 @@ def _cmd_init(args):
     _emit(result, args.compact)
 
 
-def _validate_values(values):
+def _selected_adapter(values):
     from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
+    return select_adapter(os.environ.get("QMT_RPYC_ADAPTER", values.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)))
+
+
+def _validate_values(values):
     errors = []
+    adapter = None
     try:
-        select_adapter(os.environ.get("QMT_RPYC_ADAPTER", values.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER)))
+        adapter = _selected_adapter(values)
     except ValueError as exc:
         errors.append(str(exc))
     auth_key = values.get("QMT_RPYC_AUTH_KEY", "")
@@ -306,7 +317,7 @@ def _validate_values(values):
         errors.append(
             "QMT_RPYC_AUTH_KEY is missing or still uses the placeholder"
         )
-    if not values.get("QMT_PATH"):
+    if (adapter is None or adapter.requires_native_sdk) and not values.get("QMT_PATH"):
         errors.append("QMT_PATH is missing")
     try:
         port = int(values.get("QMT_RPYC_PORT", "18812"))
@@ -333,19 +344,29 @@ def _cmd_check(args):
     add("config_values", not errors, "; ".join(errors))
     version_ok = sys.version_info[:2] in ((3, 10), (3, 11))
     add("python", version_ok, sys.version.split()[0])
-    detected = detect_environment()
-    add("MiniQMT", bool(detected.get("miniqmt")),
-        "XtMiniQmt.exe is not running" if not detected.get("miniqmt") else "")
     try:
-        xtquant = load_sdk(configured_sdk_path(values))
-        xtquant_ok = True
-        origin = getattr(xtquant, "__file__", None)
-        detail = str(Path(origin).resolve()) if origin else "module path unavailable"
-    except Exception as e:
+        adapter = _selected_adapter(values)
+    except ValueError:
+        adapter = None
+    if adapter is None:
         xtquant_ok = False
-        detail = str(e)
-    add("xtquant", xtquant_ok, detail)
-
+        add('adapter', False, 'Invalid adapter selection')
+    elif not adapter.requires_native_sdk:
+        xtquant_ok = True
+        add("strategy_bridge_mode", True, "Independent of xtquant and MiniQMT; checking the local strategy pipe")
+    else:
+        detected = detect_environment()
+        add("MiniQMT", bool(detected.get("miniqmt")),
+            "XtMiniQmt.exe is not running" if not detected.get("miniqmt") else "")
+        try:
+            xtquant = load_sdk(configured_sdk_path(values))
+            xtquant_ok = True
+            origin = getattr(xtquant, "__file__", None)
+            detail = str(Path(origin).resolve()) if origin else "module path unavailable"
+        except Exception as e:
+            xtquant_ok = False
+            detail = str(e)
+        add("xtquant", xtquant_ok, detail)
     connected = False
     if not errors and xtquant_ok:
         try:
@@ -356,6 +377,10 @@ def _cmd_check(args):
                 path=values.get("QMT_PATH", ""),
                 session_id=int(values.get("QMT_SESSION_ID", "1")),
                 account_id=values.get("QMT_ACCOUNT_ID", ""),
+                **({} if adapter.requires_native_sdk else {
+                    "pipe_name": os.environ.get("QMT_RPYC_BIGQMT_PIPE", values.get("QMT_RPYC_BIGQMT_PIPE", "qmt_rpyc_bridge_v1")),
+                    "request_timeout": int(os.environ.get("QMT_RPYC_BIGQMT_TIMEOUT", values.get("QMT_RPYC_BIGQMT_TIMEOUT", "30"))),
+                }),
             )
             try:
                 # probe() blocks for one real attempt; start() only schedules

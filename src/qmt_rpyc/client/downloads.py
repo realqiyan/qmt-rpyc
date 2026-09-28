@@ -1,7 +1,7 @@
 import math
 import time
-from datetime import date, datetime
-from typing import Optional, Sequence, Union
+from datetime import date
+from typing import Optional, Sequence
 
 from qmt_rpyc.contracts.common import EmptyRequest
 from qmt_rpyc.contracts.downloads import (
@@ -23,8 +23,8 @@ from .base import _API, _sequence
 
 
 class DownloadsAPI(_API):
-    def start_history(self, code: str, period: Period, start: Optional[Union[date, datetime]] = None,
-                       end: Optional[Union[date, datetime]] = None) -> TaskRef:
+    def start_history(self, code: str, period: Period, start: Optional[date] = None,
+                       end: Optional[date] = None) -> TaskRef:
         return self._call("downloads.start_history", HistoryDownloadRequest(code, period, start, end))
 
     def start_financials(self, codes: Sequence[str], tables: Sequence[FinancialTable] = FINANCIAL_TABLES,

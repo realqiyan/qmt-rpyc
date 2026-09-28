@@ -23,7 +23,7 @@ def test_all_operations_and_nested_fields_are_documented():
         api = describe_api(name)
         for key in ('request', 'response', 'error'):
             check(api[key])
-    assert CONTRACT_HASH == 'ce5ba31ec0d948354590569d375b99d474fe60c045130f5875ac151674010a4c'
+    assert CONTRACT_HASH == '791c40500fbe8c530521d83ef4380e087f7d92a89dd058ee1d2e535e03100c07'
 
 
 def test_list_is_one_description_per_operation_without_schemas(capsys):

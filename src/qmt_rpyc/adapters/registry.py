@@ -12,6 +12,7 @@ class Adapter:
     name: str
     sdk_version: str
     package: str
+    requires_native_sdk: bool = True
 
     def connection_type(self):
         return import_module(self.package + ".connection").ConnectionManager
@@ -24,12 +25,15 @@ class Adapter:
         return import_module(self.package + ".debug").DebugGateway(connection)
 
     def discover(self):
+        if not self.requires_native_sdk:
+            raise ValueError('SDK discovery is unavailable for the BigQMT strategy bridge')
         return import_module(self.package + ".discovery").build_api_surface()
 
 
 ADAPTERS: Mapping[str, Adapter] = MappingProxyType({
     DEFAULT_ADAPTER: Adapter(DEFAULT_ADAPTER, "2.0.6.1",
                              "qmt_rpyc.adapters.xtquant_2_0_6_1"),
+    "bigqmt": Adapter("bigqmt", "strategy-bridge-v4", "qmt_rpyc.adapters.bigqmt", False),
 })
 
 

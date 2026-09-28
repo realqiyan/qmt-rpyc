@@ -45,6 +45,37 @@ def test_config_requires_complete_tls_pair():
         _validate_config(_config(tls_keyfile="server.key"))
 
 
+@pytest.mark.parametrize('debug_enabled', [False, True])
+def test_bigqmt_starts_without_loading_sdk_and_serves_offline_health(monkeypatch, debug_enabled):
+    from qmt_rpyc.adapters.bigqmt.connection import ConnectionManager
+    from qmt_rpyc.server.service import XtquantService
+    import qmt_rpyc.server.sdk_loader as loader
+    import rpyc.utils.server
+    from qmt_rpyc.transport.codec import loads, dumps
+    from qmt_rpyc.contracts.operations import CONTRACT_HASH
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('BigQMT must not load or locate xtquant')
+    monkeypatch.setattr(loader, 'load_sdk', forbidden)
+    monkeypatch.setattr(loader, 'configured_sdk_path', forbidden)
+    monkeypatch.setattr(ConnectionManager, 'start', lambda self: None)
+    class Server:
+        def __init__(self, *args, **kwargs): pass
+        def close(self): pass
+        def start(self):
+            service = XtquantService()
+            negotiated = loads(service.exposed_negotiate(CONTRACT_HASH))
+            assert negotiated['capabilities']['operations']['trading.submit_order']['available']
+            response = loads(service.exposed_call(dumps(dict(contract_version=4,
+                request_id='test', operation='system.get_health', payload={}))))
+            assert not response['data']['connected']
+            diagnostic = loads(service.exposed_debug(dumps(dict(action='call', target='bridge.cache_info'))))
+            assert (diagnostic['status'] == 'ok') == debug_enabled
+    monkeypatch.setattr(rpyc.utils.server, 'ThreadedServer', Server)
+    assert start_server(_config(adapter='bigqmt', xtquant_path='unused', auth_key=None,
+                               allow_insecure=True, debug=debug_enabled)) == 0
+
+
 def test_server_serves_health_and_discovery_during_blocked_qmt_init(mock_xtquant, monkeypatch):
     import qmt_rpyc.adapters.xtquant_2_0_6_1.factory as adapters
     from qmt_rpyc.adapters.xtquant_2_0_6_1.connection import ConnectionManager
@@ -72,7 +103,7 @@ def test_server_serves_health_and_discovery_during_blocked_qmt_init(mock_xtquant
                 from qmt_rpyc.contracts.operations import CONTRACT_HASH
                 from qmt_rpyc.contracts.common import EmptyRequest
                 negotiated = loads(service.exposed_negotiate(CONTRACT_HASH))
-                health = loads(service.exposed_call(dumps(dict(contract_version=2, request_id="test", operation="system.get_health", payload={}))))["data"]
+                health = loads(service.exposed_call(dumps(dict(contract_version=4, request_id="test", operation="system.get_health", payload={}))))["data"]
                 assert health["connected"] is False
                 assert health["connection_state"] == "connecting"
                 assert "market.get_ticks" in negotiated["capabilities"]["operations"]

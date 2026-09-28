@@ -20,7 +20,6 @@ def run_self_test(client, test_symbols=None, timeout=30):
         'market.get_ticks': lambda: client.market.get_ticks([code]).require_all(),
         'market.get_market_ticks': lambda: client.market.get_market_ticks([symbols['market']]),
         'market.get_daily_bars': lambda: client.market.get_daily_bars([code], count=2).require_all(),
-        'market.get_intraday_bars': lambda: client.market.get_intraday_bars([code], '1m', count=2).require_all(),
         'market.get_trading_dates': lambda: client.market.get_trading_dates(symbols['market'], count=2),
         'financials.get_reports': lambda: client.financials.get_reports([code]).require_all(),
         'system.get_health': lambda: client.system.get_health(),

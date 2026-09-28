@@ -35,9 +35,9 @@ class Instrument:
 
 @dataclass(frozen=True)
 class TradingReference:
-    source_is_trading: bool
+    source_is_trading: Optional[bool]
     previous_close: float
-    settlement_price: float
+    settlement_price: Optional[float]
     upper_limit: float
     lower_limit: float
     price_tick: float
