@@ -109,7 +109,7 @@ class BridgeQueue:
     def submit(self, raw):
         request = wire_load(raw, REQUEST_LIMIT)
         if (type(request) is not dict or set(request) != {'version', 'instance', 'id', 'expires_at', 'operation', 'arguments'}
-                or type(request['version']) is not int or request['version'] != BRIDGE_VERSION
+                or type(request['version']) is not int
                 or type(request['id']) is not str or len(request['id']) != 32
                 or any(char not in '0123456789abcdef' for char in request['id'])
                 or type(request['operation']) is not str or request['operation'] not in ARGUMENTS
@@ -120,6 +120,9 @@ class BridgeQueue:
         remaining = request['expires_at'] - self.wall_clock()
         ticket = Ticket(self, request, self.clock() + max(0, min(MAX_WAIT_SECONDS, remaining)))
         error = None
+        if request['version'] != BRIDGE_VERSION:
+            ticket.state, ticket.response = 'done', self.reply(request['id'], error='PROTOCOL_MISMATCH')
+            return ticket
         if request['instance'] != self.instance and not (request['instance'] is None and request['operation'] == 'ping'):
             error = 'STALE_INSTANCE'
         elif remaining <= 0 or remaining > MAX_WAIT_SECONDS + 1:

@@ -42,3 +42,16 @@ def test_local_capacity_timeout_does_not_mark_connected_bridge_disconnected():
     manager._run()
     assert manager.get_health_status()['connected']
     assert manager.failures == 0
+
+
+def test_health_preserves_actionable_protocol_failure():
+    from qmt_rpyc.adapters.errors import ProviderError
+    manager = ConnectionManager()
+    def fail():
+        manager.stopping.set()
+        raise ProviderError('NOT_CONNECTED', '', 'BigQMT bridge protocol mismatch: service expects 7, strategy reports 4')
+    manager.probe = fail
+    manager._run()
+    health = manager.get_health_status()
+    assert not health['connected']
+    assert 'service expects 7, strategy reports 4' in health['last_connection_error']

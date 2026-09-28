@@ -4,6 +4,8 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from qmt_rpyc.adapters.errors import ProviderError
+
 from .transport import BridgeCapacityError, PipeTransport
 from .winpipe import DEFAULT_PIPE
 
@@ -47,11 +49,12 @@ class ConnectionManager:
                 # A local wait did not reach QMT. It is not evidence of a lost
                 # strategy and must not consume the reconnection failure budget.
                 logger.info('BigQMT heartbeat deferred: local capacity is busy')
-            except Exception:
+            except Exception as exc:
                 logger.warning('BigQMT bridge heartbeat failed', exc_info=True)
                 with self.lock:
                     self.failures += 1
-                    self.state, self.error = 'disconnected', 'BigQMT strategy bridge is unavailable'
+                    self.state = 'disconnected'
+                    self.error = str(exc) if isinstance(exc, ProviderError) else 'BigQMT strategy bridge is unavailable'
                     if self.max_attempts and self.failures >= self.max_attempts:
                         self.state = 'exhausted'
                         return

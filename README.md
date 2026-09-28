@@ -131,3 +131,23 @@ MiniQMT 继续使用原来的安装/启动入口。BigQMT 交易使用每次请�
 
 底层标的列表可返回本地最近成功缓存，诊断可查看更新时间；两个交易参考字段缺失时为
 `None`。下单返回不代表成交，撤单返回只代表发出信号，最终以柜台回报为准。
+
+### Windows 更新与排错
+
+推荐下载并完整解压 Windows Release ZIP，保留安装脚本、`verify-install.py`、wheel
+和策略文件在同一目录。在 PowerShell 进入该目录后运行：
+
+```powershell
+.\install-bigqmt.bat
+# 在 QMT 内停止旧策略，替换并启动包内 bigqmt_strategy.py（GBK）
+.\start-bigqmt.bat
+```
+
+更新前先停止旧 RPyC 服务。外部服务安装不会自动替换 QMT 内的策略。
+新版脚本会强制替换 qmt-rpyc 本体，检查发行版本、契约与桥协议兼容编号，
+并在包内存在策略时检查其版本和内容指纹；配置与认证码不随升级覆盖。
+启动时会显示所选环境、配置文件、Python 和包路径。环境变量仍优先于配置文件。
+
+同一个版本字符串不代表测试构建与正式包内容一致。发现编号不一致时，请完整解压
+正式包并重新安装，不要仅执行 `pip install --upgrade`。PowerShell 调用带引号的
+Python 路径需要 `&`，环境变量写作 `$env:LOCALAPPDATA`；`%LOCALAPPDATA%` 是 CMD 语法。

@@ -113,3 +113,12 @@ def test_response_size_failure_does_not_truncate_success(monkeypatch):
     bridge, _ = setup_bridge()
     response = wire_load(bridge.reply('1' * 32, result='x' * 1000), 200)
     assert response['error'] == 'RESULT_TOO_LARGE' and 'result' not in response
+
+
+def test_protocol_mismatch_replies_without_pump_or_native_execution():
+    bridge, _ = setup_bridge(context=SimpleNamespace(
+        get_full_tick=lambda *args: pytest.fail('mismatched request executed')))
+    ticket = bridge.submit(request(bridge, 'ticks', {'selectors': ['000001.SZ']}, version=4))
+    assert result(ticket)['error'] == 'PROTOCOL_MISMATCH'
+    assert result(ticket)['version'] == BRIDGE_VERSION
+    assert bridge.pending.empty()

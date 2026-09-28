@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Force-replace the pinned online package, verify installed compatibility identifiers and bundled strategy fingerprints, and show the selected Python/configuration at startup.
+- Report BigQMT protocol mismatches without executing requests; retain actionable bridge errors in health diagnostics.
+
 ## [0.7.0] - 2026-09-28
 
 - Align public contract and private BigQMT bridge compatibility identifiers at 7. Upgrade clients, service and strategy together.

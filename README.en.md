@@ -107,3 +107,15 @@ Startup never submits trades. BigQMT trades use the STOCK account supplied per r
 Debug remains read-only. Underlying discovery may return the persisted last successful list;
 cache diagnostics expose age and refresh errors. Missing trading flags and settlement values
 are null. Submission/cancellation responses do not assert a fill or final cancellation.
+
+### Windows update checks
+
+Extract the complete Windows Release ZIP, keeping `verify-install.py`, the BAT
+scripts, wheel and strategy together. In PowerShell, run `./install-bigqmt.bat`,
+replace/restart the GBK strategy inside QMT, then run `./start-bigqmt.bat`.
+Stop the external RPyC server before installation; installing it does not replace
+the embedded strategy. Updated scripts force-replace the pinned package, verify
+compatibility IDs and the bundled strategy fingerprint, and display the selected
+Python/configuration paths. Existing credentials/configuration are preserved;
+environment overrides still apply. PowerShell uses `&` to invoke quoted executable
+paths and `$env:LOCALAPPDATA` for environment expansion, unlike CMD's `%LOCALAPPDATA%`.

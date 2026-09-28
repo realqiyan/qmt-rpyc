@@ -61,8 +61,19 @@ if defined BUNDLED_WHEEL (
     "%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install "%BUNDLED_WHEEL%[server]"
     if errorlevel 1 exit /b 1
 ) else (
-    "%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install --upgrade --index-url https://pypi.org/simple "qmt-rpyc[server]==%QMT_RPYC_VERSION%"
+    REM A prerelease/local build may have reused this version; always replace the package.
+    "%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install --force-reinstall --no-deps --no-cache-dir --index-url https://pypi.org/simple "qmt-rpyc==%QMT_RPYC_VERSION%"
     if errorlevel 1 exit /b 1
+    "%QMT_RPYC_VENV%\Scripts\python.exe" -m pip install --index-url https://pypi.org/simple "qmt-rpyc[server]==%QMT_RPYC_VERSION%"
+    if errorlevel 1 exit /b 1
+)
+
+"%QMT_RPYC_VENV%\Scripts\python.exe" -m pip check
+if errorlevel 1 exit /b 1
+"%QMT_RPYC_VENV%\Scripts\python.exe" "%~dp0verify-install.py" --expected-version "%QMT_RPYC_VERSION%"
+if errorlevel 1 (
+    echo [ERROR] Installation verification failed. Extract the current official bundle and reinstall.
+    exit /b 1
 )
 
 > "%QMT_RPYC_ROOT%\qmt-rpyc-server.bat" echo @echo off

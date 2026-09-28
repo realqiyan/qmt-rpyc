@@ -9,6 +9,7 @@ from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
 from qmt_rpyc.server.logging_config import setup_logging
 from qmt_rpyc.server.redaction import mask_account
 from qmt_rpyc.version import __version__
+from qmt_rpyc.contracts.operations import CONTRACT_VERSION
 
 logger = logging.getLogger(__name__)
 _crash_fp = None
@@ -139,6 +140,9 @@ def _print_startup_info(cfg, cm):
         "  qmt-rpyc server",
         "=" * 56,
         "  Version  : {}".format(__version__),
+        "  Contract : {}".format(CONTRACT_VERSION),
+        "  Python   : {}".format(sys.executable),
+        "  Package  : {}".format(Path(__file__).resolve().parents[1]),
         "  Adapter  : {}".format(cfg.get("adapter", DEFAULT_ADAPTER)),
         "  Listen   : {}:{}".format(host, port),
         "  Auth     : {}".format(auth),
@@ -152,6 +156,9 @@ def _print_startup_info(cfg, cm):
         "  Log dir  : {}".format(cfg.get("log_dir", "logs")),
         "=" * 56,
     ]
+    if cfg.get("adapter", DEFAULT_ADAPTER) == 'bigqmt':
+        from qmt_rpyc.adapters.bigqmt.bridge_queue import BRIDGE_VERSION
+        lines.insert(5, "  Bridge   : {}".format(BRIDGE_VERSION))
     for line in lines:
         print(line)
 

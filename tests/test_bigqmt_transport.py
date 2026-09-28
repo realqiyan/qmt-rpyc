@@ -100,3 +100,29 @@ def test_standalone_strategy_is_python36_and_has_no_package_dependency(tmp_path)
     assert 'strategy_revision=' not in source
     assert 'bridge_protocol=' not in source
     assert 'version=' in source and 'build=' in source
+
+
+def test_mismatched_strategy_reports_expected_and_received_protocol_without_retry():
+    channel, bridge, calls = transport()
+    channel.request('ping', {})
+    original = channel.exchange
+    def outdated(*args):
+        response = json.loads(original(*args))
+        response['version'] = 4
+        return wire_dump(response)
+    channel.exchange = outdated
+    with pytest.raises(ProviderError, match='service expects 7, strategy reports 4'):
+        channel.request('ping', {})
+    assert len(calls) == 2
+    assert channel.instance is None
+
+
+def test_legacy_pipe_close_explains_release_check_without_claiming_a_known_mismatch():
+    calls = []
+    def closed(*args):
+        calls.append(args)
+        raise OSError(109, 'pipe ended')
+    channel = PipeTransport(exchange_fn=closed)
+    with pytest.raises(ProviderError, match='pipe closed by strategy; check'):
+        channel.request('ping', {})
+    assert len(calls) == 1

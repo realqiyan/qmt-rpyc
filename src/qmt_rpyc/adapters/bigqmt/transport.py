@@ -61,17 +61,28 @@ class PipeTransport:
                 reply = wire_load(raw, RESPONSE_LIMIT)
                 expected = {'version', 'instance', 'id', 'error' if 'error' in reply else 'result'}
                 if (type(reply) is not dict or set(reply) != expected or type(reply['version']) is not int
-                        or reply['version'] != BRIDGE_VERSION or reply['id'] != request_id
+                        or reply['id'] != request_id
                         or type(reply['instance']) is not str or len(reply['instance']) != 32
                         or any(char not in '0123456789abcdef' for char in reply['instance'])):
                     raise ValueError('invalid bridge response correlation')
+                if reply['version'] != BRIDGE_VERSION:
+                    self._invalidate(instance)
+                    raise ProviderError('NOT_CONNECTED', '',
+                        'BigQMT bridge protocol mismatch: service expects %s, strategy reports %s. '
+                        'Install the same official release for the service and QMT strategy.'
+                        % (BRIDGE_VERSION, reply['version']),
+                        'sdk_execution', 'unknown' if mutation else 'not_applicable')
                 if operation != 'ping' and reply['instance'] != instance:
                     raise ValueError('bridge instance changed during request')
                 if time.monotonic() >= deadline:
                     raise TimeoutError('late bridge response')
             except (OSError, ValueError, TypeError, RuntimeError, RecursionError) as exc:
                 self._invalidate(instance)
-                raise ProviderError('NOT_CONNECTED', '', 'BigQMT bridge exchange failed',
+                message = 'BigQMT bridge exchange failed'
+                if isinstance(exc, OSError) and exc.errno == 109:
+                    message += (': pipe closed by strategy; check that the service and strategy '
+                                'come from the same official release, then check strategy logs')
+                raise ProviderError('NOT_CONNECTED', '', message,
                                     'sdk_execution', 'unknown' if mutation else 'not_applicable') from exc
             if 'error' in reply:
                 category = 'API_UNAVAILABLE' if reply['error'] == 'API_UNAVAILABLE' else 'SOURCE_ERROR'
