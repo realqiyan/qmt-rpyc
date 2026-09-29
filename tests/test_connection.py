@@ -23,6 +23,57 @@ def mock_xtquant():
 
 
 class TestConnectionManager:
+    @pytest.mark.parametrize('failure', [-1, TimeoutError('QMT unavailable'),
+                                         ConnectionRefusedError('QMT unavailable')])
+    def test_waiting_for_qmt_recovers_without_error_logs(
+            self, mock_xtquant, monkeypatch, caplog, failure):
+        import logging
+        from qmt_rpyc.adapters.xtquant_2_0_6_1.connection import ConnectionManager
+        sdk = sys.modules['xtquant.xttrader']
+        attempts = []
+
+        def connect(trader):
+            attempts.append(trader)
+            if len(attempts) == 1:
+                if isinstance(failure, Exception):
+                    raise failure
+                return failure
+            return 0
+
+        monkeypatch.setattr(sdk.XtQuantTrader, 'connect', connect)
+        cm = ConnectionManager('test', 1, '')
+        cm.RECONNECT_BACKOFF = [0.001]
+        try:
+            with caplog.at_level(logging.INFO):
+                cm._reconnect_loop(immediate=True)
+            assert cm.is_connected
+            assert len(attempts) == 2
+            records = [record for record in caplog.records
+                       if record.name.endswith('xtquant_2_0_6_1.connection')]
+            assert all(record.levelno < logging.WARNING and record.exc_info is None
+                       for record in records)
+            assert 'Waiting for QMT; retrying' in caplog.text
+            assert 'QMT connected after 2 attempt(s)' in caplog.text
+        finally:
+            cm.stop()
+
+    def test_unexpected_connect_failure_keeps_traceback(self, mock_xtquant, monkeypatch, caplog):
+        from qmt_rpyc.adapters.xtquant_2_0_6_1.connection import ConnectionManager
+        sdk = sys.modules['xtquant.xttrader']
+
+        def connect(trader):
+            raise ValueError('unexpected SDK failure')
+
+        monkeypatch.setattr(sdk.XtQuantTrader, 'connect', connect)
+        cm = ConnectionManager('test', 1, '', reconnect_max_attempts=1)
+        try:
+            cm._reconnect_loop(immediate=True)
+            assert cm.get_health_status()['connection_state'] == 'exhausted'
+            assert any(record.exc_info for record in caplog.records)
+            assert 'QMT connect failed unexpectedly' in caplog.text
+        finally:
+            cm.stop()
+
     def test_start_returns_while_native_constructor_is_blocked(
             self, mock_xtquant, monkeypatch):
         from qmt_rpyc.adapters.xtquant_2_0_6_1.connection import ConnectionManager

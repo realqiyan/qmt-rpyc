@@ -1,6 +1,9 @@
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
+
+import pytest
 
 from qmt_rpyc.adapters.bigqmt.bridge_queue import BRIDGE_VERSION, wire_dump
 from qmt_rpyc.adapters.bigqmt.connection import ConnectionManager
@@ -55,3 +58,70 @@ def test_health_preserves_actionable_protocol_failure():
     health = manager.get_health_status()
     assert not health['connected']
     assert 'service expects 7, strategy reports 4' in health['last_connection_error']
+
+
+def test_waiting_and_restart_have_friendly_logs_and_restore_requests(monkeypatch, caplog):
+    instances = [None, None, '1' * 32, None, '2' * 32]
+    step = 0
+
+    def exchange(name, raw, deadline):
+        instance = instances[step]
+        if instance is None:
+            raise TimeoutError('bridge connect deadline')
+        request = json.loads(raw)
+        result = ({'runtime': 'bigqmt', 'read_only': False}
+                  if request['operation'] == 'ping' else {'code': 'TEST'})
+        return wire_dump(dict(version=BRIDGE_VERSION, id=request['id'],
+                              instance=instance, result=result))
+
+    transport = PipeTransport(exchange_fn=exchange)
+    manager = ConnectionManager(transport=transport)
+    states = []
+
+    def advance(interval):
+        nonlocal step
+        states.append(manager.get_health_status()['connection_state'])
+        assert transport.instance == instances[step]
+        if instances[step] is not None:
+            assert transport.request('instrument', {'code': 'TEST'}) == {'code': 'TEST'}
+        step += 1
+        if step == len(instances):
+            manager.stopping.set()
+
+    monkeypatch.setattr(manager.stopping, 'wait', advance)
+    with caplog.at_level(logging.INFO):
+        manager._run()
+    assert states == ['disconnected', 'disconnected', 'connected', 'disconnected', 'connected']
+    assert manager.failures == 0
+    assert all(record.exc_info is None for record in caplog.records)
+    assert caplog.text.count('QMT bridge connected;') == 2
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert 'connection lost' in warnings[0].message
+    assert 'retrying in 30s' in caplog.text
+
+
+@pytest.mark.parametrize('failure', [ValueError('bad response'), PermissionError(5, 'access denied')])
+def test_unexpected_bridge_failure_keeps_traceback(failure, caplog):
+    def exchange(*args):
+        raise failure
+
+    manager = ConnectionManager(transport=PipeTransport(exchange_fn=exchange), reconnect_max_attempts=1)
+    manager._run()
+    assert any(record.exc_info for record in caplog.records)
+    assert manager.state == 'exhausted'
+    assert 'automatic retries stopped' in caplog.text
+
+
+def test_expected_failure_exhaustion_is_actionable_without_traceback(caplog):
+    def exchange(*args):
+        raise TimeoutError('bridge connect deadline')
+
+    manager = ConnectionManager(transport=PipeTransport(exchange_fn=exchange), reconnect_max_attempts=1)
+    with caplog.at_level(logging.INFO):
+        manager._run()
+    assert manager.state == 'exhausted'
+    assert all(record.exc_info is None for record in caplog.records)
+    assert 'automatic retries stopped' in caplog.text
+    assert 'Restart the service' in caplog.text
+    assert 'retrying in' not in caplog.text

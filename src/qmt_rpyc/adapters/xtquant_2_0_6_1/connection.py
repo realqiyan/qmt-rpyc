@@ -273,6 +273,12 @@ class ConnectionManager:
             self._record_connection_error("xtquant import failed")
             self._stop_trader(trader)
             return
+        except (ConnectionError, TimeoutError) as e:
+            logger.info("Waiting for QMT: Trader initialization connection unavailable")
+            logger.debug("Trader initialization connection unavailable", exc_info=True)
+            self._record_connection_error("trader initialization failed: " + type(e).__name__)
+            self._stop_trader(trader)
+            return
         except Exception as e:
             logger.exception("trader init failed")
             self._record_connection_error("trader initialization failed: " + type(e).__name__)
@@ -297,11 +303,11 @@ class ConnectionManager:
             self._stop_trader(trader)
             return
 
-        logger.info(
+        logger.debug(
             "Discovered %d Trader methods requiring StockAccount adaptation",
             len(discovered),
         )
-        logger.info("XtQuantTrader initialized (path=%s, session=%d)",
+        logger.debug("XtQuantTrader initialized (path=%s, session=%d)",
                     self._path or "(empty)", self._session_id)
 
     def connect(self) -> bool:
@@ -318,7 +324,10 @@ class ConnectionManager:
             with native_lock:
                 result = trader.connect()
         except Exception as e:
-            logger.error("connect failed: %s", e)
+            if isinstance(e, (ConnectionError, TimeoutError)):
+                logger.debug("QMT connection unavailable", exc_info=True)
+            else:
+                logger.exception("QMT connect failed unexpectedly")
             self._record_connection_error("Trader.connect failed: " + type(e).__name__)
             with self._trader_lock:
                 if self._trader is trader:
@@ -377,7 +386,11 @@ class ConnectionManager:
                            result, mask_account(account_id))
             return False
         except Exception as e:
-            logger.error("subscribe failed: %s", e)
+            if isinstance(e, (ConnectionError, TimeoutError)):
+                logger.info("QMT account subscription is waiting for the connection")
+                logger.debug("QMT account subscription connection unavailable", exc_info=True)
+            else:
+                logger.exception("QMT account subscription failed unexpectedly")
             return False
 
     # ── properties ─────────────────────────────────────────────────
@@ -426,10 +439,9 @@ class ConnectionManager:
                 else:
                     self._heartbeat_failures += 1
                     failures = self._heartbeat_failures
-                    logger.warning("Heartbeat failure %d/%d",
+                    logger.info("QMT heartbeat unavailable (%d/%d)",
                                    failures, self._heartbeat_max_failures)
             if not ok and failures >= self._heartbeat_max_failures:
-                logger.error("Heartbeat lost — %d consecutive failures", failures)
                 self.mark_disconnected(trader)
 
     def _do_heartbeat(self) -> bool:
@@ -472,17 +484,21 @@ class ConnectionManager:
                                 result_container[0] = (
                                     self._trader is trader
                                     and self._connected)
+                        except (ConnectionError, TimeoutError):
+                            logger.debug("QMT data heartbeat connection unavailable", exc_info=True)
                         except Exception:
-                            pass
+                            logger.warning("QMT data heartbeat failed unexpectedly", exc_info=True)
+            except (ConnectionError, TimeoutError):
+                logger.debug("QMT heartbeat connection unavailable", exc_info=True)
             except Exception:
-                pass
+                logger.warning("QMT heartbeat failed unexpectedly", exc_info=True)
 
         t = threading.Thread(target=_check, daemon=True)
         t.start()
         t.join(timeout=self._heartbeat_timeout)
 
         if t.is_alive():
-            logger.warning("Heartbeat timed out after %ds", self._heartbeat_timeout)
+            logger.debug("QMT heartbeat timed out after %ds", self._heartbeat_timeout)
             return False
         return result_container[0]
 
@@ -513,7 +529,7 @@ class ConnectionManager:
                     "data": None,
                 })
         if was_connected:
-            logger.warning("QMT connection lost")
+            logger.warning("QMT connection lost; reconnecting automatically")
         self.schedule_reconnect()
 
     def schedule_reconnect(self, immediate=False):
@@ -579,7 +595,7 @@ class ConnectionManager:
                     datetime.fromtimestamp(time.time() + delay).isoformat()
                     if delay else None)
             if delay:
-                logger.info("QMT waiting to retry in %ss", delay)
+                logger.info("Waiting for QMT; retrying in %ss", delay)
             if self._stop_event.wait(delay):
                 return
 
@@ -587,7 +603,7 @@ class ConnectionManager:
                 self._connection_state = "connecting"
                 self._next_retry_at = None
                 self._reconnect_attempts += 1
-            logger.info("Reconnect attempt %d (delay=%ds) ...",
+            logger.debug("Reconnect attempt %d (delay=%ds) ...",
                         self._reconnect_attempts, delay)
             attempt_number = self._reconnect_attempts
             try:
@@ -614,12 +630,12 @@ class ConnectionManager:
                         "data": {"attempts": attempt_number},
                     })
                 self.start_heartbeat()
-                logger.info("Reconnect successful after %d attempt(s)",
+                logger.info("QMT connected after %d attempt(s); ready to accept requests",
                             attempt_number)
                 return
             with self._trader_lock:
                 self._consecutive_failures += 1
-            logger.warning("QMT connection attempt failed: %s",
+            logger.debug("QMT connection attempt failed: %s",
                            self._last_connection_error)
 
     def _reset_trader(self):

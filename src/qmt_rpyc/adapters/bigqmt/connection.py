@@ -12,6 +12,16 @@ from .winpipe import DEFAULT_PIPE
 logger = logging.getLogger(__name__)
 
 
+def _is_connection_unavailable(exc):
+    if not isinstance(exc, ProviderError) or exc.category != 'NOT_CONNECTED':
+        return False
+    cause = exc.__cause__
+    # Missing/busy/closed pipes are normal while QMT starts or restarts.
+    # Protocol, permission and malformed-response failures remain diagnostic errors.
+    return (isinstance(cause, (TimeoutError, ConnectionError))
+            or isinstance(cause, OSError) and cause.errno in (2, 109, 231, 232, 233))
+
+
 class ConnectionManager:
     def __init__(self, path='', session_id=1, account_id='', heartbeat_interval=30,
                  heartbeat_timeout=5, heartbeat_max_failures=3, reconnect_max_attempts=0,
@@ -36,9 +46,12 @@ class ConnectionManager:
     def probe(self):
         self.transport.request('ping', {}, timeout=self.timeout)
         with self.lock:
+            was_connected = self.state == 'connected'
             self.failures = 0
             self.state, self.error = 'connected', ''
             self.heartbeat = datetime.now(timezone.utc).isoformat()
+        if not was_connected:
+            logger.info('QMT bridge connected; ready to accept requests')
         return True
 
     def _run(self):
@@ -50,14 +63,28 @@ class ConnectionManager:
                 # strategy and must not consume the reconnection failure budget.
                 logger.info('BigQMT heartbeat deferred: local capacity is busy')
             except Exception as exc:
-                logger.warning('BigQMT bridge heartbeat failed', exc_info=True)
                 with self.lock:
+                    was_connected = self.state == 'connected'
                     self.failures += 1
                     self.state = 'disconnected'
                     self.error = str(exc) if isinstance(exc, ProviderError) else 'BigQMT strategy bridge is unavailable'
-                    if self.max_attempts and self.failures >= self.max_attempts:
+                    exhausted = self.max_attempts and self.failures >= self.max_attempts
+                    if exhausted:
                         self.state = 'exhausted'
-                        return
+                if _is_connection_unavailable(exc):
+                    if was_connected:
+                        logger.warning('QMT bridge connection lost; waiting for QMT and its bridge strategy')
+                    if not exhausted:
+                        logger.info('Waiting for QMT bridge strategy; retrying in %ss (attempt %d)',
+                                    self.interval, self.failures)
+                    logger.debug('QMT bridge connection unavailable', exc_info=True)
+                else:
+                    logger.warning('BigQMT bridge heartbeat failed', exc_info=True)
+                if exhausted:
+                    logger.error('QMT bridge retry limit (%d) reached; automatic retries stopped. '
+                                 'Restart the service after QMT and its bridge strategy are ready',
+                                 self.max_attempts)
+                    return
             self.stopping.wait(self.interval)
 
     def stop(self):
