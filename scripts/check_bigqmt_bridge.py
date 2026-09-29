@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from qmt_rpyc.adapters.bigqmt.factory import create_providers
 from qmt_rpyc.adapters.bigqmt.reader import StrategyReader
 from qmt_rpyc.adapters.bigqmt.transport import PipeTransport
-from qmt_rpyc.contracts.common import CodesRequest, EmptyRequest
+from qmt_rpyc.contracts.common import CodesRequest
 from qmt_rpyc.contracts.market import DailyBarsQuery, MarketTicksRequest, TradingDatesRequest
 from qmt_rpyc.contracts.reference import IndexWeightsRequest
 
@@ -15,7 +15,7 @@ from qmt_rpyc.contracts.reference import IndexWeightsRequest
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pipe', default='qmt_rpyc_bridge_v1')
-    parser.add_argument('--extended', action='store_true', help='also read whole-market ticks, sector tree and full index weights')
+    parser.add_argument('--extended', action='store_true', help='also read whole-market ticks and full index weights')
     args = parser.parse_args()
     transport = PipeTransport(args.pipe)
     transport.request('ping', {})
@@ -49,7 +49,6 @@ def main():
     run('options.get_contract_details', option)
     if args.extended:
         run('market.get_market_ticks', lambda: providers.market.get_market_ticks(MarketTicksRequest(('SH', 'SZ'))))
-        run('reference.list_sectors', lambda: providers.reference.list_sectors(EmptyRequest()))
         run('reference.get_index_weights', lambda: providers.reference.get_index_weights(IndexWeightsRequest('000300.SH')))
     print(json.dumps(dict(status='passed' if all(x['status'] == 'returned' for x in checks) else 'failed',
                           production_ready=False, trading_calls=0, financial_calls=0), sort_keys=True))

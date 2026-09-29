@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Protocol, Tuple
 
-from qmt_rpyc.contracts.common import BatchResult, CodesRequest, EmptyRequest
+from qmt_rpyc.contracts.common import BatchResult, CachedCodesRequest, CodesRequest, EmptyRequest, RefreshRequest
 from qmt_rpyc.contracts.downloads import (
     FinancialDownloadRequest,
     HistoryDownloadRequest,
@@ -30,7 +30,6 @@ from qmt_rpyc.contracts.reference import (
     DividendQuery,
     IndexWeights,
     IndexWeightsRequest,
-    SectorMembersRequest,
 )
 from qmt_rpyc.contracts.system import Capabilities
 from qmt_rpyc.contracts.trading import (
@@ -61,12 +60,6 @@ class MarketProvider(Protocol):
 
 
 class ReferenceProvider(Protocol):
-    def list_sectors(self, r: EmptyRequest) -> Tuple[str, ...]:
-        ...
-
-    def get_sector_members(self, r: SectorMembersRequest) -> Tuple[str, ...]:
-        ...
-
     def get_dividend_events(self, r: DividendQuery) -> Tuple[DividendEvent, ...]:
         ...
 
@@ -75,10 +68,10 @@ class ReferenceProvider(Protocol):
 
 
 class InstrumentsProvider(Protocol):
-    def list_option_underlyings(self, r: EmptyRequest) -> Tuple[str, ...]:
+    def list_option_underlyings(self, r: RefreshRequest) -> Tuple[str, ...]:
         ...
 
-    def get_details(self, r: CodesRequest) -> BatchResult[Instrument]:
+    def get_details(self, r: CachedCodesRequest) -> BatchResult[Instrument]:
         ...
 
     def get_trading_reference(self, r: CodesRequest) -> BatchResult[TradingReference]:
@@ -92,7 +85,7 @@ class OptionsProvider(Protocol):
     def get_option_chain(self, r: OptionChainRequest) -> OptionChain:
         ...
 
-    def get_contract_details(self, r: CodesRequest) -> BatchResult[OptionContract]:
+    def get_contract_details(self, r: CachedCodesRequest) -> BatchResult[OptionContract]:
         ...
 
 
@@ -122,7 +115,6 @@ class DownloadProvider(Protocol):
     def validate_history(self, request: HistoryDownloadRequest) -> None: ...
     def history(self, request: HistoryDownloadRequest) -> None: ...
     def financials(self, request: FinancialDownloadRequest) -> None: ...
-    def sectors(self, request: EmptyRequest) -> None: ...
     def index_weights(self, request: EmptyRequest) -> None: ...
 
 

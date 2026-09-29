@@ -63,7 +63,7 @@ def test_bigqmt_factory_capabilities_and_downloads_do_not_need_bridge():
     adapter = select_adapter('bigqmt')
     assert not adapter.requires_native_sdk
     providers = create_providers(SimpleNamespace(transport=channel))
-    assert len(providers.capabilities.operations) == 27
+    assert len(providers.capabilities.operations) == 24
     assert providers.capabilities.operations['trading.submit_order'].available
     providers.downloads.sectors(EmptyRequest())
     assert calls == []
@@ -111,7 +111,7 @@ def test_mismatched_strategy_reports_expected_and_received_protocol_without_retr
         response['version'] = 4
         return wire_dump(response)
     channel.exchange = outdated
-    with pytest.raises(ProviderError, match='service expects 7, strategy reports 4'):
+    with pytest.raises(ProviderError, match='service expects 8, strategy reports 4'):
         channel.request('ping', {})
     assert len(calls) == 2
     assert channel.instance is None

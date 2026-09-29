@@ -28,12 +28,12 @@ def mock_server(service):
 
 def test_typed_operations_over_socket(mock_server):
     with QmtClient.connect('127.0.0.1', port=mock_server.port) as client:
-        assert len(client.capabilities().operations) == 27
+        assert len(client.capabilities().operations) == 24
         ticks = client.market.get_ticks(['600000.SH']).require_all()
         assert isinstance(ticks['600000.SH'].bid_prices, tuple)
         bars = client.market.get_daily_bars(['600000.SH'], count=2).require_all()
         assert bars['600000.SH'].rows[0].trade_date == date(2026, 9, 18)
-        assert client.health().contract_version == 7
+        assert client.health().contract_version == 8
         result = client.trading.submit_order('ACC1', '600000.SH', 'BUY', 100, pricing="LIMIT", price=10.0)
         assert isinstance(result, Submitted)
         assert result.order_id in {order.order_id for order in client.trading.list_orders('ACC1')}

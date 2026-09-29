@@ -78,6 +78,9 @@ def _load_config(config_path=None):
         "auth_key": os.environ.get("QMT_RPYC_AUTH_KEY"),
         "allow_insecure": _env_bool("QMT_RPYC_ALLOW_INSECURE"),
         "debug": _env_bool("QMT_RPYC_DEBUG"),
+        "cache_path": os.environ.get("QMT_RPYC_CACHE_PATH", ""),
+        "cache_source": os.environ.get("QMT_RPYC_CACHE_SOURCE", ""),
+        "cache_policies": os.environ.get("QMT_RPYC_CACHE_POLICIES", "{}"),
         "adapter": os.environ.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER),
         "bigqmt_pipe": os.environ.get("QMT_RPYC_BIGQMT_PIPE", "qmt_rpyc_bridge_v1"),
         "bigqmt_timeout": _env_int("QMT_RPYC_BIGQMT_TIMEOUT", 30, 1, 120),
@@ -104,6 +107,8 @@ def _load_config(config_path=None):
 
 
 def _validate_config(cfg):
+    from qmt_rpyc.storage.policy import StorageConfig
+    StorageConfig.from_config(cfg, default_server_dir())
     adapter = select_adapter(cfg.get("adapter", DEFAULT_ADAPTER))
     if not adapter.requires_native_sdk:
         from qmt_rpyc.adapters.bigqmt.winpipe import pipe_path
@@ -228,8 +233,20 @@ def start_server(cfg, tls=None):
         workers = int(os.environ.get('QMT_BATCH_MAX_WORKERS', '8'))
         if workers < 1:
             raise ValueError('QMT_BATCH_MAX_WORKERS must be positive')
-        XtquantService._dispatcher = Dispatcher(adapter.create_providers(cm, workers), dm,
-            cm.get_health_status, lambda: XtquantService._active_clients)
+        from qmt_rpyc.storage.policy import StorageConfig
+        from qmt_rpyc.storage.repository import Repository
+        from qmt_rpyc.storage.providers import decorate
+        storage_config = StorageConfig.from_config(cfg, default_server_dir())
+        repository = Repository(storage_config.path, storage_config.source_scope, storage_config.busy_timeout)
+        source = adapter.create_providers(cm, workers)
+        providers = decorate(source, repository, storage_config.policies, workers=workers,
+            **adapter.storage_strategies(source))
+        def health():
+            result = dict(cm.get_health_status())
+            result['persistent_data'] = repository.health()
+            return result
+        XtquantService._dispatcher = Dispatcher(providers, dm,
+            health, lambda: XtquantService._active_clients)
 
         XtquantService._debug_handler = None
         if cfg.get('debug', False):

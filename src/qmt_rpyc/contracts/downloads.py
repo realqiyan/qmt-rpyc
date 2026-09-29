@@ -13,7 +13,7 @@ from .common import (
 from .financials import FINANCIAL_TABLES, FinancialTable
 from .market import Period
 
-TaskKind = Literal["HISTORY", "FINANCIAL", "SECTORS", "INDEX_WEIGHTS"]
+TaskKind = Literal["HISTORY", "FINANCIAL", "INDEX_WEIGHTS"]
 
 
 @dataclass(frozen=True)

@@ -60,7 +60,7 @@ Important helpers:
 
 `server/main.py` composes typed SDK providers, task manager, dispatcher and authenticated RPyC service. RPC starts independently of background QMT connection attempts. `service.py` exposes contract negotiation and JSON operation calls, plus a separately gated SDK diagnostic RPC.
 
-`contracts/operations.py` fixes the 27 public operations. Public requests/results are frozen dataclasses grouped by domain; protocol versions belong to metadata, not import paths. Contracts never depend on transport, client, server or SDK packages. The client never imports server or adapters. `__init__.py` contains exports only.
+`contracts/operations.py` fixes the 24 public operations. Public requests/results are frozen dataclasses grouped by domain; protocol versions belong to metadata, not import paths. Contracts never depend on transport, client, server or SDK packages. The client never imports server or adapters. `__init__.py` contains exports only.
 
 Adapters return public models directly; native names and transformations remain inside the selected adapter (`xtquant_2_0_6_1` or `bigqmt`). BigQMT strategy artifacts must use GBK and Python 3.6-compatible source; the external service uses the supported Windows Python runtime. Probes inspect actual deployed signatures/constants without SDK calls. Discovery is diagnostics only and cannot add public operations. The explicitly enabled `QMT_RPYC_DEBUG=1` diagnostic entry may invoke direct public SDK methods outside the operation registry; it is authenticated, off by default, and not a stable application contract. `adapters/interfaces.py` is the replacement seam, not generic string invocation.
 

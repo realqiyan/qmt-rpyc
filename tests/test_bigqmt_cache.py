@@ -80,7 +80,7 @@ def test_failed_refresh_is_not_cached_or_replaced_by_stale_success():
     assert cache.info()['entries'] == 2
 
 
-def test_underlying_list_retains_success_across_disconnection_but_contract_cache_does_not():
+def test_underlying_source_reads_synchronously_without_serving_stale_cache():
     reader = Reader()
     reads = []
     reader.get_option_underlying_map = lambda: reads.append('map') or {'510050.SH': reader.codes}
@@ -92,10 +92,26 @@ def test_underlying_list_retains_success_across_disconnection_but_contract_cache
     for _ in range(2):
         assert instruments.list_option_underlyings(EmptyRequest()) == ('510050.SH',)
         options.get_expiry_dates(ExpiryDatesRequest('510050.SH'))
-    assert reads == ['map', 'details']
+    assert reads == ['map', 'details', 'details', 'map', 'details']
     def disconnected():
         raise ProviderError('NOT_CONNECTED', '', 'unavailable')
     reader.cache_token = disconnected
-    assert instruments.list_option_underlyings(EmptyRequest()) == ('510050.SH',)
+    reader.get_option_underlying_map = disconnected
+    with pytest.raises(ProviderError):
+        instruments.list_option_underlyings(EmptyRequest())
     with pytest.raises(ProviderError):
         options.get_expiry_dates(ExpiryDatesRequest('510050.SH'))
+
+
+def test_fresh_underlying_result_rejects_bridge_change_during_discovery():
+    reader = Reader()
+    token = ['first']
+    reader.cache_token = lambda: token[0]
+    def load_map():
+        token[0] = 'second'
+        return {'510050.SH': reader.codes}
+    reader.get_option_underlying_map = load_map
+    options = OptionsAdapter(reader, market_date=lambda: date(2026, 9, 28))
+    instruments = InstrumentsAdapter(reader, market_date=options.market_date, options=options)
+    with pytest.raises(ProviderError, match='bridge changed'):
+        instruments.list_option_underlyings(EmptyRequest())

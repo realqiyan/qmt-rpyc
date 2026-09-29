@@ -11,8 +11,7 @@ from qmt_rpyc.contracts.system import Capabilities
 
 
 def validate_result(operation, request, result):
-    if operation in ("reference.list_sectors", "reference.get_sector_members",
-                     "instruments.list_option_underlyings"):
+    if operation == "instruments.list_option_underlyings":
         if any(not identity or identity.strip() != identity for identity in result):
             raise ProtocolError("result identities must be nonempty without surrounding whitespace")
         if result != tuple(sorted(set(result))):
@@ -36,7 +35,7 @@ def validate_result(operation, request, result):
                         raise ProtocolError("financial requested-table presence mismatch")
     if isinstance(result, TaskRef):
         expected = {"downloads.start_history": "HISTORY", "downloads.start_financials": "FINANCIAL",
-                    "downloads.start_sectors": "SECTORS", "downloads.start_index_weights": "INDEX_WEIGHTS"}[operation]
+                    "downloads.start_index_weights": "INDEX_WEIGHTS"}[operation]
         if result.kind != expected:
             raise ProtocolError("download task kind mismatch")
     if isinstance(result, DownloadStatus) and result.task_id != request.task_id:

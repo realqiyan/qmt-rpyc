@@ -23,9 +23,9 @@ class MarketAPI(_API):
         return self._call("market.get_market_ticks", MarketTicksRequest(_sequence(markets)))
 
     def get_daily_bars(self, codes: Sequence[str], start: Optional[date] = None, end: Optional[date] = None,
-                       count: Optional[int] = None, adjustment: Adjustment = "none", fill_data: bool = True) -> BatchResult[DailyBarSeries]:
-        return self._call("market.get_daily_bars", DailyBarsQuery(_sequence(codes), start, end, count, adjustment, fill_data))
+                       count: Optional[int] = None, adjustment: Adjustment = "none", fill_data: bool = True, refresh: bool = False) -> BatchResult[DailyBarSeries]:
+        return self._call("market.get_daily_bars", DailyBarsQuery(_sequence(codes), start, end, count, adjustment, fill_data, refresh))
 
     def get_trading_dates(self, market: str, start: Optional[date] = None, end: Optional[date] = None,
-                          count: Optional[int] = None) -> Tuple[date, ...]:
-        return self._call("market.get_trading_dates", TradingDatesRequest(market, start, end, count))
+                          count: Optional[int] = None, refresh: bool = False) -> Tuple[date, ...]:
+        return self._call("market.get_trading_dates", TradingDatesRequest(market, start, end, count, refresh))

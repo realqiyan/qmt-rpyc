@@ -3,8 +3,8 @@ from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Mapping, Optional, Protocol, Sequence, Tuple
 
-from qmt_rpyc.adapters.errors import ItemFailure
-from qmt_rpyc.contracts.common import BatchResult, CodesRequest, EmptyRequest
+from qmt_rpyc.adapters.errors import ItemFailure, ProviderError
+from qmt_rpyc.contracts.common import BatchResult, CachedCodesRequest, CodesRequest, EmptyRequest, RefreshRequest
 from qmt_rpyc.contracts.instruments import Instrument, TradingReference
 from qmt_rpyc.contracts.options import ExpiryDatesRequest
 from . import conversions as v
@@ -27,23 +27,28 @@ class InstrumentsAdapter:
         self.underlying_cache = underlying_cache if underlying_cache is not None else UnderlyingCache()
         self.options = options if options is not None else OptionsAdapter(reader, workers, market_date)
 
-    def list_option_underlyings(self, request: EmptyRequest) -> Tuple[str, ...]:
-        return self.underlying_cache.get(self._load_underlyings)
+    def list_option_underlyings(self, request: RefreshRequest) -> Tuple[str, ...]:
+        return self._load_underlyings()
 
     def _load_underlyings(self):
+        token = self.options.cache_token()
         source = v.read(self.reader.get_option_underlying_map)
         if not isinstance(source, Mapping):
             raise ValueError('all-market option underlying source must be a mapping')
         codes = v.identities(source)
         if not codes:
+            if self.options.cache_token() != token:
+                raise ProviderError('NOT_CONNECTED', '', 'bridge changed during underlying discovery')
             return ()
         def current(code):
-            return bool(self.options.get_expiry_dates(ExpiryDatesRequest(code)).dates)
+            return bool(self.options.get_expiry_dates(ExpiryDatesRequest(code, refresh=True)).dates)
         with ThreadPoolExecutor(max_workers=min(3, self.workers, len(codes))) as pool:
             available = tuple(pool.map(current, codes))
+        if self.options.cache_token() != token:
+            raise ProviderError('NOT_CONNECTED', '', 'bridge changed during underlying discovery')
         return tuple(code for code, active in zip(codes, available) if active)
 
-    def get_details(self, request: CodesRequest) -> BatchResult[Instrument]:
+    def get_details(self, request: CachedCodesRequest) -> BatchResult[Instrument]:
         def one(code):
             row = v.read(self.reader.get_instrument_detail, code)
             if row is None or row == {}:

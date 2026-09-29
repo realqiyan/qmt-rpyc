@@ -9,6 +9,8 @@ from qmt_rpyc.contracts.common import (
     MAX_CODES,
     BatchResult,
     CodesRequest,
+    CachedCodesRequest,
+    RefreshRequest,
     EmptyRequest,
     OperationError,
 )
@@ -41,7 +43,6 @@ from qmt_rpyc.contracts.reference import (
     DividendQuery,
     IndexWeights,
     IndexWeightsRequest,
-    SectorMembersRequest,
 )
 from qmt_rpyc.contracts.system import Capabilities, Health
 from qmt_rpyc.contracts.trading import (
@@ -58,7 +59,7 @@ from qmt_rpyc.contracts.trading import (
 
 from .schema import schema
 
-CONTRACT_VERSION = 7
+CONTRACT_VERSION = 8
 
 
 @dataclass(frozen=True)
@@ -69,14 +70,12 @@ class Operation:
 
 
 OPERATIONS = {
-    "reference.list_sectors": Operation(EmptyRequest, Tuple[str, ...]),
-    "reference.get_sector_members": Operation(SectorMembersRequest, Tuple[str, ...]),
-    "instruments.list_option_underlyings": Operation(EmptyRequest, Tuple[str, ...]),
-    "instruments.get_details": Operation(CodesRequest, BatchResult[Instrument]),
+    "instruments.list_option_underlyings": Operation(RefreshRequest, Tuple[str, ...]),
+    "instruments.get_details": Operation(CachedCodesRequest, BatchResult[Instrument]),
     "instruments.get_trading_reference": Operation(CodesRequest, BatchResult[TradingReference]),
     "options.get_expiry_dates": Operation(ExpiryDatesRequest, ExpiryDates),
     "options.get_option_chain": Operation(OptionChainRequest, OptionChain),
-    "options.get_contract_details": Operation(CodesRequest, BatchResult[OptionContract]),
+    "options.get_contract_details": Operation(CachedCodesRequest, BatchResult[OptionContract]),
     "market.get_ticks": Operation(CodesRequest, BatchResult[Tick]),
     "market.get_market_ticks": Operation(MarketTicksRequest, MarketTicks),
     "market.get_daily_bars": Operation(DailyBarsQuery, BatchResult[DailyBarSeries]),
@@ -86,7 +85,6 @@ OPERATIONS = {
     "financials.get_reports": Operation(FinancialQuery, BatchResult[FinancialReports]),
     "downloads.start_history": Operation(HistoryDownloadRequest, TaskRef, True),
     "downloads.start_financials": Operation(FinancialDownloadRequest, TaskRef, True),
-    "downloads.start_sectors": Operation(EmptyRequest, TaskRef, True),
     "downloads.start_index_weights": Operation(EmptyRequest, TaskRef, True),
     "downloads.get_task": Operation(TaskRequest, DownloadStatus),
     "trading.get_asset": Operation(AccountRequest, Optional[Asset]),

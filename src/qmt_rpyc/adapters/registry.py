@@ -21,6 +21,10 @@ class Adapter:
         factory = import_module(self.package + ".factory")
         return factory.create_providers(connection, workers, environment)
 
+    def storage_strategies(self, providers):
+        factory = import_module(self.package + ".factory")
+        return factory.storage_strategies(providers)
+
     def create_debug(self, connection):
         return import_module(self.package + ".debug").DebugGateway(connection)
 

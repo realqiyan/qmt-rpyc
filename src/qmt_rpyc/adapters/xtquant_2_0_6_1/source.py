@@ -14,8 +14,6 @@ from .serializer import serialize
 logger = logging.getLogger(__name__)
 
 DEPENDENCIES = {
-    'reference.list_sectors': ('get_sector_list',),
-    'reference.get_sector_members': ('get_stock_list_in_sector',),
     'instruments.list_option_underlyings': ('get_option_undl_data', 'get_option_detail_data'),
     'instruments.get_details': ('get_instrument_detail', 'get_option_detail_data'),
     'instruments.get_trading_reference': ('get_instrument_detail',),
@@ -31,7 +29,6 @@ DEPENDENCIES = {
     'financials.get_reports': ('get_financial_data',),
     'downloads.start_history': ('download_history_data',),
     'downloads.start_financials': ('download_financial_data',),
-    'downloads.start_sectors': ('download_sector_data',),
     'downloads.start_index_weights': ('download_index_weight',),
     'trading.get_asset': ('trader.query_stock_asset',),
     'trading.list_positions': ('trader.query_stock_positions',),

@@ -1,9 +1,17 @@
 # Changelog
 
-## Unreleased
+## [0.8.0] - 2026-09-29
+
+- Add server-owned SQLite business storage with typed provider decorators, category freshness policies, source-scoped coverage, synchronous refresh, per-security concurrency and fault degradation.
+- Add `refresh=False` to eight reads; adjusted refreshes also refresh event dependencies. Preserve financial date-basis isolation and conservative invalidation without inventing source completeness.
+- Reuse verified historical bar ranges and locally derive verified BigQMT adjustment cases. Keep unverified financial coverage, suspension filling and adapter-specific adjustments on the source path; record observed rows without claiming reusable coverage.
+- Replace BigQMT underlying stale/background reads with synchronous source reads behind the shared persistent layer; expose persistent-data health.
+- Remove sector listing, sector membership and sector download operations. Contract and BigQMT compatibility identifiers become 8; install matching client, server and generated strategy builds.
 
 - Force-replace the pinned online package, verify installed compatibility identifiers and bundled strategy fingerprints, and show the selected Python/configuration at startup.
 - Report BigQMT protocol mismatches without executing requests; retain actionable bridge errors in health diagnostics.
+
+- Validate BigQMT historical bars, five adjustment modes, suspension fallback, refresh/read consistency and persistence across service restart. Financial source checks cover Income in both date bases; xtquant deployment, other financial tables and long-duration stability are not claimed as validated.
 
 ## [0.7.0] - 2026-09-28
 

@@ -15,9 +15,9 @@ from qmt_rpyc.adapters.xtquant_2_0_6_1 import conversions as values
 def invoke(service, monkeypatch):
     monkeypatch.setattr(values, 'market_date', lambda: date(2026, 9, 18))
     manifest = codec.loads(service.exposed_negotiate(CONTRACT_HASH))
-    assert manifest['contract_version'] == 7
+    assert manifest['contract_version'] == 8
     def call(operation, **payload):
-        wire = codec.dumps(dict(contract_version=7, request_id='test-request', operation=operation, payload=payload))
+        wire = codec.dumps(dict(contract_version=8, request_id='test-request', operation=operation, payload=payload))
         response = codec.loads(service.exposed_call(wire))
         assert response['request_id'] == 'test-request'
         return response
@@ -33,8 +33,6 @@ def value(invoke, operation, **payload):
 def test_all_read_capabilities_have_typed_results(invoke):
     from qmt_rpyc.contracts.financials import FINANCIAL_TABLES
     cases = {
-        'reference.list_sectors': {},
-        'reference.get_sector_members': {'sector': '沪深A股'},
         'instruments.list_option_underlyings': {},
         'instruments.get_details': {'codes': ['600000.SH']},
         'instruments.get_trading_reference': {'codes': ['600000.SH']},
@@ -98,7 +96,7 @@ def test_invalid_requests_do_not_execute(invoke, service, monkeypatch):
 
 def test_all_download_kinds_and_status(invoke):
     cases = [('history', {'code': '600000.SH', 'period': '1d'}),
-             ('financials', {'codes': ['600000.SH']}), ('sectors', {}), ('index_weights', {})]
+             ('financials', {'codes': ['600000.SH']}), ('index_weights', {})]
     for kind, params in cases:
         ref = value(invoke, 'downloads.start_' + kind, **params)
         deadline = time.monotonic() + 2
@@ -252,8 +250,8 @@ def test_wrong_source_contract_identity_is_not_attached_to_requested_code(invoke
 
 def test_source_identity_sets_reject_empty_names(invoke, service, monkeypatch):
     sdk = service._dispatcher.providers.market.b.environment.xtdata
-    monkeypatch.setattr(sdk, 'get_sector_list', lambda: [''])
-    assert invoke('reference.list_sectors')['status'] == 'error'
+    monkeypatch.setattr(sdk, 'get_option_undl_data', lambda undl_code_ref: [''])
+    assert invoke('instruments.list_option_underlyings')['status'] == 'error'
 
 
 def test_alternative_provider_uses_identical_contract_without_sdk():
@@ -281,20 +279,20 @@ def test_alternative_provider_uses_identical_contract_without_sdk():
     providers = Providers(unavailable, unavailable, unavailable, unavailable, unavailable,
                           AlternativeTrading(), unavailable, capabilities)
     dispatcher = Dispatcher(providers)
-    request = dict(contract_version=7, request_id='alternate', operation='trading.get_asset', payload={'account': 'test'})
+    request = dict(contract_version=8, request_id='alternate', operation='trading.get_asset', payload={'account': 'test'})
     result = codec.loads(dispatcher.call(codec.dumps(request)))
     assert codec.decode(OPERATIONS['trading.get_asset'].response_type, result['data']).cash == 12.5
-    request.update(operation='reference.list_sectors', payload={})
+    request.update(operation='instruments.list_option_underlyings', payload={})
     assert codec.loads(dispatcher.call(codec.dumps(request)))['error']['error_type'] == 'API_UNAVAILABLE'
 
 
 def test_signature_drift_disables_only_dependent_operations(mock_xtquant, monkeypatch):
     import sys
     from qmt_rpyc.adapters.xtquant_2_0_6_1.factory import create_providers
-    monkeypatch.setattr(sys.modules['xtquant.xtdata'], 'get_sector_list', lambda required: [])
+    monkeypatch.setattr(sys.modules['xtquant.xtdata'], 'get_index_weight', lambda required, extra: [])
     capabilities = create_providers().capabilities.operations
-    assert not capabilities['reference.list_sectors'].available
-    assert 'signature mismatch' in capabilities['reference.list_sectors'].reason
+    assert not capabilities['reference.get_index_weights'].available
+    assert 'signature mismatch' in capabilities['reference.get_index_weights'].reason
     assert capabilities['market.get_ticks'].available
     assert capabilities['options.get_expiry_dates'].available
 

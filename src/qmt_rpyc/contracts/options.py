@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal, Tuple
 
-from .common import validate_identity
+from .common import validate_refresh, validate_identity
 
 
 @dataclass(frozen=True)
@@ -46,8 +46,10 @@ class OptionContract:
 @dataclass(frozen=True)
 class ExpiryDatesRequest:
     underlying: str
+    refresh: bool = False
 
     def __post_init__(self):
+        validate_refresh(self.refresh)
         validate_identity(self.underlying, "underlying")
 
 

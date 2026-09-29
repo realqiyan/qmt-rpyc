@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal, Optional, Tuple
 
-from .common import validate_codes, validate_window
+from .common import validate_refresh, validate_codes, validate_window
 
 FinancialTable = Literal["Balance", "Income", "CashFlow", "Capital", "PershareIndex"]
 
@@ -81,8 +81,10 @@ class FinancialQuery:
     start: Optional[date] = None
     end: Optional[date] = None
     date_basis: Literal["report_time", "announce_time"] = "report_time"
+    refresh: bool = False
 
     def __post_init__(self):
+        validate_refresh(self.refresh)
         validate_codes(self.codes)
         validate_window(self.start, self.end)
         if any(table not in FINANCIAL_TABLES for table in self.tables):

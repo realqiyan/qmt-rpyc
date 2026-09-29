@@ -13,7 +13,7 @@ def live_client():
 
 
 def test_live_contract_and_health(live_client):
-    assert len(live_client.capabilities().operations) == 27
+    assert len(live_client.capabilities().operations) == 24
     assert live_client.system.get_health().connected
 
 

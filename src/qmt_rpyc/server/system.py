@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from qmt_rpyc.contracts.common import EmptyRequest
 from qmt_rpyc.contracts.operations import CONTRACT_VERSION
-from qmt_rpyc.contracts.system import Capabilities, DownloadStats, Health
+from qmt_rpyc.contracts.system import Capabilities, DownloadStats, Health, PersistentDataHealth
 from qmt_rpyc.transport.auth import PROTOCOL_VERSION
 from qmt_rpyc.version import __version__
 
@@ -28,4 +28,5 @@ class SystemService:
                       connection_state=raw.get('connection_state', 'uninitialized'),
                       last_connection_error=raw.get('last_connection_error') or None, next_retry_at=instant(raw.get('next_retry_at')),
                       active_clients=self.active_clients(), download_tasks=stats, package_version=__version__,
-                      protocol_version=PROTOCOL_VERSION, contract_version=CONTRACT_VERSION)
+                      protocol_version=PROTOCOL_VERSION, contract_version=CONTRACT_VERSION,
+                      persistent_data=PersistentDataHealth(**raw["persistent_data"]) if raw.get("persistent_data") else None)

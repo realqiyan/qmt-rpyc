@@ -12,10 +12,6 @@ from .reader import StrategyReader
 from .reference import ReferenceAdapter
 
 from .trading import TradingAdapter
-from .underlying_cache import UnderlyingCache
-import os
-import hashlib
-from pathlib import Path
 
 
 def create_providers(connection=None, workers=8, environment=None):
@@ -33,10 +29,12 @@ def create_providers(connection=None, workers=8, environment=None):
         operations[name] = Capability(True, 'bigqmt', reason)
     options = OptionsAdapter(reader, workers)
     connection.discovery_cache = options.cache
-    cache_root = Path(os.environ.get('LOCALAPPDATA') or os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
-    namespace = hashlib.sha256(str(getattr(connection.transport, 'name', 'default')).encode()).hexdigest()[:16]
-    underlyings = UnderlyingCache(cache_root / 'qmt-rpyc' / ('underlyings-' + namespace + '.json'))
-    connection.underlying_cache = underlyings
     return Providers(MarketAdapter(reader, workers), ReferenceAdapter(reader),
-        InstrumentsAdapter(reader, workers, options=options, underlying_cache=underlyings), options,
+        InstrumentsAdapter(reader, workers, options=options, underlying_cache=None), options,
         FinancialsAdapter(reader, workers), TradingAdapter(connection.transport), DownloadAdapter(), Capabilities(operations))
+
+
+def storage_strategies(providers):
+    from qmt_rpyc.adapters.storage_evidence import BigQmtCoverage
+    from qmt_rpyc.storage.adjustment import SampledBigQmtAdjustment
+    return dict(evidence=BigQmtCoverage(providers.market), adjustment=SampledBigQmtAdjustment())

@@ -22,7 +22,7 @@ class Root:
 
     def negotiate(self, digest):
         assert digest == CONTRACT_HASH
-        return dumps({"contract_version": 7, "contract_hash": CONTRACT_HASH,
+        return dumps({"contract_version": 8, "contract_hash": CONTRACT_HASH,
                       "capabilities": Capabilities({op: Capability(True, "fake", None) for op in OPERATIONS})})
 
     def call(self, payload):
@@ -31,7 +31,7 @@ class Root:
         result = self.callback(request)
         if isinstance(result, str):
             return result
-        return dumps(dict(contract_version=7, request_id=request["request_id"], operation=request["operation"], status="ok", data=result))
+        return dumps(dict(contract_version=8, request_id=request["request_id"], operation=request["operation"], status="ok", data=result))
 
 
 def client(callback):
@@ -47,7 +47,7 @@ def test_negotiation_is_explicit_and_does_not_fall_back():
     with pytest.raises(ProtocolError, match="contract negotiation failed"):
         value._negotiate()
     connected = client(lambda request: [])
-    assert connected.contract_version == 7
+    assert connected.contract_version == 8
     assert set(connected.capabilities().operations) == set(OPERATIONS)
 
 
@@ -57,7 +57,7 @@ def test_requests_use_dates_and_explicit_defaults_without_remote_objects():
     assert result.require_all()["510050.SH"].rows == ()
     payload = value._conn.root.calls[0]["payload"]
     assert payload == {"codes": ["510050.SH"], "start": None, "end": "2026-09-24", "count": 20,
-                       "adjustment": "none", "fill_data": True}
+                       "adjustment": "none", "fill_data": True, "refresh": False}
 
 
 def test_empty_codes_do_not_dispatch_or_masquerade_as_market_query():
@@ -73,7 +73,7 @@ def test_single_string_is_not_split_into_security_codes():
     assert value._conn.root.calls == []
 
 
-@pytest.mark.parametrize("operation", ["reference.list_sectors", "reference.get_sector_members", "instruments.list_option_underlyings"])
+@pytest.mark.parametrize("operation", ["instruments.list_option_underlyings"])
 @pytest.mark.parametrize("identities", [[""], [" "], [" padded"], ["padded "], ["B", "A"], ["A", "A"]])
 def test_discovery_identity_collections_are_validated(operation, identities):
     value = client(lambda request: identities)
@@ -105,16 +105,16 @@ def test_batch_rejects_reordering_omission_duplication_or_extra_identity(codes):
 @pytest.mark.parametrize("field,bad", [("request_id", "wrong"), ("operation", "wrong"), ("contract_version", 1)])
 def test_read_response_must_match_request_context(field, bad):
     def response(request):
-        envelope = dict(contract_version=7, request_id=request["request_id"], operation=request["operation"], status="ok", data=[])
+        envelope = dict(contract_version=8, request_id=request["request_id"], operation=request["operation"], status="ok", data=[])
         envelope[field] = bad
         return dumps(envelope)
     with pytest.raises(ProtocolError):
-        client(response).reference.list_sectors()
+        client(response).instruments.list_option_underlyings()
 
 
 @pytest.mark.parametrize("call", [lambda c: c.trading.submit_order("account", "600000.SH", "BUY", 100, pricing="LIMIT", price=5),
                                   lambda c: c.trading.cancel_order("account", order_id="123"),
-                                  lambda c: c.downloads.start_sectors()])
+                                  lambda c: c.downloads.start_index_weights()])
 def test_invalid_mutation_response_is_unknown_and_never_retried(call):
     value = client(lambda request: "bad JSON")
     with pytest.raises(OutcomeUnknownError) as caught:
@@ -128,7 +128,7 @@ def test_transport_error_preserves_read_vs_mutation_outcome():
         raise EOFError("lost")
     value = client(broken)
     with pytest.raises(QmtError) as caught:
-        value.reference.list_sectors()
+        value.instruments.list_option_underlyings()
     assert caught.value.phase == "transport" and caught.value.outcome == "not_applicable"
     with pytest.raises(OutcomeUnknownError):
         value.downloads.start_index_weights()
@@ -137,9 +137,9 @@ def test_transport_error_preserves_read_vs_mutation_outcome():
 
 def test_known_preexecution_error_is_not_unknown_submission():
     def response(request):
-        error = OperationError("NOT_CONNECTED", "not ready", request["operation"], 7,
+        error = OperationError("NOT_CONNECTED", "not ready", request["operation"], 8,
                                  "pre_execution", "not_executed", request["request_id"])
-        return dumps(dict(contract_version=7, request_id=request["request_id"], operation=request["operation"], status="error", error=error))
+        return dumps(dict(contract_version=8, request_id=request["request_id"], operation=request["operation"], status="error", error=error))
     with pytest.raises(QmtError) as caught:
         client(response).trading.submit_order("a", "600000.SH", "BUY", 100, pricing="LIMIT", price=1)
     assert not isinstance(caught.value, OutcomeUnknownError)

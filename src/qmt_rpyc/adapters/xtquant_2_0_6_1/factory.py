@@ -56,3 +56,9 @@ def create_providers(connection=None, workers=8, environment=None):
         financials=FinancialsAdapter(source),
         trading=TradingAdapter(source),
         downloads=DownloadAdapter(source), capabilities=Capabilities(available))
+
+
+def storage_strategies(providers):
+    from qmt_rpyc.adapters.storage_evidence import QmtCoverage
+    from qmt_rpyc.storage.adjustment import AdjustmentPolicy
+    return dict(evidence=QmtCoverage(providers.market), adjustment=AdjustmentPolicy())

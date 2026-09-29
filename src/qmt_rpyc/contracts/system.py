@@ -19,6 +19,15 @@ class DownloadStats:
 
 
 @dataclass(frozen=True)
+class PersistentDataHealth:
+    enabled: bool
+    degraded: bool
+    error: Optional[str]
+    read_failures: int
+    write_failures: int
+
+
+@dataclass(frozen=True)
 class Health:
     connected: bool
     trader_available: bool
@@ -35,6 +44,7 @@ class Health:
     package_version: str
     protocol_version: int
     contract_version: int
+    persistent_data: Optional[PersistentDataHealth] = None
 
     def __post_init__(self):
         validate_nonnegative(self, "active_clients", "heartbeat_failures", "reconnect_attempts", "consecutive_failures", "uptime_seconds")

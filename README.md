@@ -2,7 +2,7 @@
 
 通过固定的 Python 模型和操作连接 QMT/MiniQMT。Windows 服务端对接券商定制 xtquant；客户端支持 Linux、macOS 和 Windows。
 
-当前源码版本 **0.7.0**。建议客户端与服务端安装同一份构建；连接时按契约版本和指纹检查兼容性。
+当前源码版本 **0.8.0**。建议客户端与服务端安装同一份构建；连接时按契约版本和指纹检查兼容性。
 [English](README.en.md) · [架构](docs/design/architecture.md) · [完整接口及字段](docs/api/contract.md)
 
 ## 安装与启动
@@ -25,11 +25,11 @@ start-rpyc.bat
 
 源码脚本创建 `.venv`，安装开发及服务端依赖，并明确使用仓库 `.env`。`start-rpyc.bat` 优先使用已初始化的源码环境；源码环境不存在时，使用 `install-server.bat` 安装的托管环境及其配置。
 
-Windows 安装或升级：运行 `install-server.bat`，完成初始化和检查后运行 `start-rpyc.bat`。同目录存在唯一 wheel 时优先安装该文件；没有 wheel 时从 PyPI 安装或升级到脚本固定的正式版本（当前 0.7.0）。升级前停止旧服务，已有配置保留。安装器将包安装到 `%LOCALAPPDATA%\qmt-rpyc\venv`；它需要联网安装第三方依赖。后续维护可使用 `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`。
+Windows 安装或升级：运行 `install-server.bat`，完成初始化和检查后运行 `start-rpyc.bat`。同目录存在唯一 wheel 时优先安装该文件；没有 wheel 时从 PyPI 安装或升级到脚本固定的正式版本（当前 0.8.0）。升级前停止旧服务，已有配置保留。安装器将包安装到 `%LOCALAPPDATA%\qmt-rpyc\venv`；它需要联网安装第三方依赖。后续维护可使用 `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`。
 
 安装包服务端默认配置位于 `%LOCALAPPDATA%\qmt-rpyc\config.env`。配置向导可探测 MiniQMT、SDK、账户和本地网络；默认生成认证密钥。客户端 profile 使用系统配置目录，密钥优先放入系统 keyring，也可通过 `QMT_RPYC_AUTH_KEY` 提供。客户端配置优先级为命令行、环境变量、profile、默认值。服务端使用 `--config` 指定的文件或默认配置文件，环境变量覆盖文件值。非交互初始化导入已有 `.env` 时需同时提供 `--non-interactive --yes`。
 
-安装 `.[dev]` 后可用 `python -m build` 构建 wheel/sdist，在两端安装同一个 wheel；该命令不生成 Windows ZIP。ZIP 由发布工作流组装。正式版可通过 `pip install qmt-rpyc==0.7.0` 安装；Windows 服务端使用 `pip install "qmt-rpyc[server]==0.7.0"`。
+安装 `.[dev]` 后可用 `python -m build` 构建 wheel/sdist，在两端安装同一个 wheel；该命令不生成 Windows ZIP。ZIP 由发布工作流组装。正式版可通过 `pip install qmt-rpyc==0.8.0` 安装；Windows 服务端使用 `pip install "qmt-rpyc[server]==0.8.0"`。
 
 启动日志中的 `SDK module` 行记录实际加载的 xtquant、xtdata、xttrader、xttype 和已加载原生扩展的文件路径；`resolved` 是解析目录联接后的真实路径。排查 SDK 升级时以这些路径为准，适配器名称不代表实际加载的 SDK 版本。
 
@@ -46,6 +46,13 @@ QMT_XTQUANT_PATH=C:\MiniQMT\bin.x64\Lib\site-packages\xtquant
 
 完整 QMT 可选 `QMT_RPYC_ADAPTER=bigqmt`，使用本项目独立维护的策略桥，无需 xtquant。
 支持行情与股票账户交易接口，交易联调仍待新版实机验收；部署步骤见[桥联调](docs/design/bigqmt-readonly-validation.md)，交易语义见[交易说明](docs/design/bigqmt-trading-probe.md)。
+
+## 服务端持久数据
+
+服务端使用本机 SQLite 保存业务数据，八个读取接口支持 `refresh=True` 同步回源。
+有效且覆盖已确认的数据可离线复用；未知覆盖不会因为调用成功就变成缓存命中。
+财报与部分来源的复权/停牌补齐仍受验证边界限制，详见[配置与实现状态](docs/design/persistent-cache.md)。
+公共契约及 BigQMT 桥编号均为 8；客户端、服务端及策略必须配套升级。已移除板块列表、板块成员和板块下载三个公共操作。
 
 ## Python 使用
 
@@ -121,16 +128,16 @@ python scripts/dump_contract.py
 本项目不分发 xtquant、QMT 或 MiniQMT，不提供投资建议。许可证为 [MIT](LICENSE)。
 
 
-### 0.7.0 完整 QMT 部署
+### 0.8.0 完整 QMT 部署
 
-客户端与服务端同步升级（公共契约 v7）。Windows 发布 ZIP 包含 GBK 编码的
-`bigqmt_strategy.py`：在完整 QMT 加载运行，保持 GBK 编码；私有桥协议为 7。
+客户端与服务端同步升级（公共契约 v8）。Windows 发布 ZIP 包含 GBK 编码的
+`bigqmt_strategy.py`：在完整 QMT 加载运行，保持 GBK 编码；私有桥协议为 8。
 使用 `install-bigqmt.bat` 安装，`start-bigqmt.bat` 启动外部服务；现有配置保留。
 MiniQMT 继续使用原来的安装/启动入口。BigQMT 交易使用每次请求指定的 STOCK 账户；
 安装和启动不会自动下单。debug 仍只开放只读方法。
 
-底层标的列表可返回本地最近成功缓存，诊断可查看更新时间；两个交易参考字段缺失时为
-`None`。下单返回不代表成交，撤单返回只代表发出信号，最终以柜台回报为准。
+期权标的列表只复用上海当天的有效缓存；过期后同步回源，失败不返回过期值。
+两个交易参考字段缺失时为 `None`。下单返回不代表成交，撤单返回只代表发出信号，最终以柜台回报为准。
 
 ### Windows 更新与排错
 

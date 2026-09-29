@@ -5,8 +5,6 @@ meaning. Missing documentation is an error, checked across every public model.
 """
 
 OPERATION_DESCRIPTIONS = {
-    'reference.list_sectors': '列出可查询的板块名称。',
-    'reference.get_sector_members': '获取指定板块的合约代码。',
     'reference.get_dividend_events': '获取按日期排列的分红除权事件及事件比率。',
     'reference.get_index_weights': '获取指数成分及源端权重。',
     'instruments.list_option_underlyings': '列出当前期权标的代码；名称另查合约详情。',
@@ -22,7 +20,6 @@ OPERATION_DESCRIPTIONS = {
     'financials.get_reports': '按合约和日期查询固定字段的财务报表。',
     'downloads.start_history': '创建历史行情下载任务，返回任务引用。',
     'downloads.start_financials': '创建财务数据下载任务，返回任务引用。',
-    'downloads.start_sectors': '创建板块资料下载任务，返回任务引用。',
     'downloads.start_index_weights': '创建指数权重下载任务，返回任务引用。',
     'downloads.get_task': '查询任务状态、进度和失败原因。',
     'trading.get_asset': '查询账户资金、冻结资金与资产市值。',
@@ -36,6 +33,13 @@ OPERATION_DESCRIPTIONS = {
 
 # Shared field meanings; model-specific exceptions are explicit below.
 FIELD_DESCRIPTIONS = {
+    'persistent_data': '持久数据存储健康状态；未配置时为 null。',
+    'enabled': '是否启用持久数据存储。',
+    'degraded': '是否发生存储降级。',
+    'read_failures': '持久存储读取失败累计次数。',
+    'write_failures': '持久存储写入失败累计次数。',
+
+    'refresh': '跳过桥接缓存并同步刷新来源；复权查询同时刷新事件依赖，失败不返回旧值。',
     'codes': '合约代码数组，保留券商后缀；最多 500 个、不可重复；空数组允许。',
     'code': '合约代码，保留券商后缀；不可为空或带首尾空白。',
     'underlying': '标的合约代码，例如 510050.SH，保留券商后缀。',

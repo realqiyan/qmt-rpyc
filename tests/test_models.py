@@ -169,7 +169,7 @@ def test_task_failure_is_not_inferred_from_null_result():
 
 
 def test_registry_covers_all_groups_and_all_mutations_include_downloads():
-    assert len(OPERATIONS) == 27
+    assert len(OPERATIONS) == 24
     assert len(CONTRACT_HASH) == 64
     assert all(operation.mutation for name, operation in OPERATIONS.items() if name.startswith("downloads.start_"))
     assert not OPERATIONS["downloads.get_task"].mutation

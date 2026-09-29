@@ -24,12 +24,11 @@ def test_compatibility_downloads_complete_as_real_tasks_without_source_or_progre
         tasks = [
             service.start_history(HistoryDownloadRequest("000001.SZ", "1d", date(2026, 1, 1))),
             service.start_financials(FinancialDownloadRequest(("000001.SZ",))),
-            service.start_sectors(EmptyRequest()),
             service.start_index_weights(EmptyRequest()),
         ]
         manager._executor.shutdown(wait=True)
-        assert len({task.task_id for task in tasks}) == 4
-        assert [task.kind for task in tasks] == ["HISTORY", "FINANCIAL", "SECTORS", "INDEX_WEIGHTS"]
+        assert len({task.task_id for task in tasks}) == 3
+        assert [task.kind for task in tasks] == ["HISTORY", "FINANCIAL", "INDEX_WEIGHTS"]
         for task in tasks:
             result = service.get_task(TaskRequest(task.task_id))
             decoded = codec.decode(DownloadStatus, codec.encode(result))
@@ -38,6 +37,6 @@ def test_compatibility_downloads_complete_as_real_tasks_without_source_or_progre
             assert decoded.status == "completed"
             assert decoded.completed_at is not None
             assert decoded.error is decoded.progress is decoded.result is None
-        assert sum("Compatibility no-op" in record.message for record in caplog.records) == 4
+        assert sum("Compatibility no-op" in record.message for record in caplog.records) == 3
     finally:
         manager.shutdown()

@@ -66,7 +66,7 @@ def test_bigqmt_starts_without_loading_sdk_and_serves_offline_health(monkeypatch
             service = XtquantService()
             negotiated = loads(service.exposed_negotiate(CONTRACT_HASH))
             assert negotiated['capabilities']['operations']['trading.submit_order']['available']
-            response = loads(service.exposed_call(dumps(dict(contract_version=7,
+            response = loads(service.exposed_call(dumps(dict(contract_version=8,
                 request_id='test', operation='system.get_health', payload={}))))
             assert not response['data']['connected']
             diagnostic = loads(service.exposed_debug(dumps(dict(action='call', target='bridge.cache_info'))))
@@ -103,7 +103,7 @@ def test_server_serves_health_and_discovery_during_blocked_qmt_init(mock_xtquant
                 from qmt_rpyc.contracts.operations import CONTRACT_HASH
                 from qmt_rpyc.contracts.common import EmptyRequest
                 negotiated = loads(service.exposed_negotiate(CONTRACT_HASH))
-                health = loads(service.exposed_call(dumps(dict(contract_version=7, request_id="test", operation="system.get_health", payload={}))))["data"]
+                health = loads(service.exposed_call(dumps(dict(contract_version=8, request_id="test", operation="system.get_health", payload={}))))["data"]
                 assert health["connected"] is False
                 assert health["connection_state"] == "connecting"
                 assert "market.get_ticks" in negotiated["capabilities"]["operations"]

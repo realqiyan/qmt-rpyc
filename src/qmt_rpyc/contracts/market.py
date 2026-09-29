@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal, Optional, Tuple, Union
 
-from .common import Failure, Success, validate_codes, validate_window
+from .common import validate_refresh, Failure, Success, validate_codes, validate_window
 
 Period = Literal["1d"]
 
@@ -86,8 +86,10 @@ class DailyBarsQuery:
     count: Optional[int] = None
     adjustment: Adjustment = "none"
     fill_data: bool = True
+    refresh: bool = False
 
     def __post_init__(self):
+        validate_refresh(self.refresh)
         validate_codes(self.codes)
         validate_window(self.start, self.end, self.count)
 
@@ -98,6 +100,8 @@ class TradingDatesRequest:
     start: Optional[date] = None
     end: Optional[date] = None
     count: Optional[int] = None
+    refresh: bool = False
 
     def __post_init__(self):
+        validate_refresh(self.refresh)
         validate_window(self.start, self.end, self.count)

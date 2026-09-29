@@ -46,14 +46,14 @@ def test_request_file_and_download_creation(monkeypatch, tmp_path, capsys):
     def connect(args):
         def invoke(operation, request):
             seen.append(operation)
-            return TaskRef('task', 'SECTORS')
+            return TaskRef('task', 'INDEX_WEIGHTS')
         yield SimpleNamespace(_invoke=invoke)
     monkeypatch.setattr(cli, '_connect', connect)
     request = tmp_path / 'request.json'
-    request.write_text('{"operation":"downloads.start_sectors","payload":{}}')
+    request.write_text('{"operation":"downloads.start_index_weights","payload":{}}')
     assert cli.main(['call', '--request', str(request)]) == 0
-    assert json.loads(capsys.readouterr().out) == {'task_id': 'task', 'kind': 'SECTORS'}
-    assert seen == ['downloads.start_sectors']
+    assert json.loads(capsys.readouterr().out) == {'task_id': 'task', 'kind': 'INDEX_WEIGHTS'}
+    assert seen == ['downloads.start_index_weights']
 
 
 def test_profile_initialization_retains_secret_storage_controls(monkeypatch, capsys):

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Mapping, Optional
 
-from .common import validate_identity, validate_window
+from .common import validate_refresh, validate_identity, validate_window
 
 
 @dataclass(frozen=True)
@@ -37,8 +37,10 @@ class DividendQuery:
     code: str
     start: Optional[date] = None
     end: Optional[date] = None
+    refresh: bool = False
 
     def __post_init__(self):
+        validate_refresh(self.refresh)
         validate_identity(self.code, "code")
         validate_window(self.start, self.end)
 

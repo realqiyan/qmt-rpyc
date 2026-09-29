@@ -106,3 +106,25 @@ class CodesRequest:
 
     def __post_init__(self):
         validate_codes(self.codes)
+
+
+@dataclass(frozen=True)
+class RefreshRequest:
+    refresh: bool = False
+
+    def __post_init__(self):
+        validate_refresh(self.refresh)
+
+
+@dataclass(frozen=True)
+class CachedCodesRequest(CodesRequest):
+    refresh: bool = False
+
+    def __post_init__(self):
+        super().__post_init__()
+        validate_refresh(self.refresh)
+
+
+def validate_refresh(value):
+    if type(value) is not bool:
+        raise ValueError("refresh must be a boolean")

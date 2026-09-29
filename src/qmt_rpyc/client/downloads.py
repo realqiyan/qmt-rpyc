@@ -31,9 +31,6 @@ class DownloadsAPI(_API):
                          start: Optional[date] = None, end: Optional[date] = None) -> TaskRef:
         return self._call("downloads.start_financials", FinancialDownloadRequest(_sequence(codes), _sequence(tables), start, end))
 
-    def start_sectors(self) -> TaskRef:
-        return self._call("downloads.start_sectors", EmptyRequest())
-
     def start_index_weights(self) -> TaskRef:
         return self._call("downloads.start_index_weights", EmptyRequest())
 

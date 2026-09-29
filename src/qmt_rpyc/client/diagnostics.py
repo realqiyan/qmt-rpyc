@@ -9,8 +9,6 @@ def run_self_test(client, test_symbols=None, timeout=30):
     symbols.update(test_symbols or {})
     code, underlying = symbols['sh_stock'], symbols['etf']
     probes = {
-        'reference.list_sectors': lambda: client.reference.list_sectors(),
-        'reference.get_sector_members': lambda: client.reference.get_sector_members(symbols['sector']),
         'reference.get_dividend_events': lambda: client.reference.get_dividend_events(code),
         'reference.get_index_weights': lambda: client.reference.get_index_weights('000300.SH'),
         'instruments.list_option_underlyings': lambda: client.instruments.list_option_underlyings(),

@@ -159,9 +159,17 @@ class OptionsAdapter:
             return code, _day(row['ExpireDate'])
         return tuple((code, expiry) for code, expiry in self._map(codes, one) if expiry >= today)
 
+    def _fresh_candidates(self, underlying, today):
+        token = self.cache_token()
+        value = self._load_candidates(underlying, today)
+        if self.cache_token() != token:
+            raise ProviderError('NOT_CONNECTED', '', 'bridge changed during option discovery')
+        return value
+
     def get_expiry_dates(self, r: ExpiryDatesRequest) -> ExpiryDates:
         today = self.market_date()
-        return ExpiryDates(today, tuple(sorted({expiry for _, expiry in self._candidates(r.underlying, today)})))
+        candidates = self._fresh_candidates(r.underlying, today) if r.refresh else self._candidates(r.underlying, today)
+        return ExpiryDates(today, tuple(sorted({expiry for _, expiry in candidates})))
 
     def get_option_chain(self, r: OptionChainRequest) -> OptionChain:
         today = self.market_date()

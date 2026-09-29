@@ -1,7 +1,7 @@
 from typing import Tuple
 
 from qmt_rpyc.adapters.errors import ItemFailure
-from qmt_rpyc.contracts.common import BatchResult, CodesRequest, EmptyRequest
+from qmt_rpyc.contracts.common import BatchResult, CachedCodesRequest, CodesRequest, EmptyRequest, RefreshRequest
 from qmt_rpyc.contracts.instruments import Instrument, TradingReference
 
 from . import conversions as v
@@ -12,13 +12,13 @@ class InstrumentsAdapter:
     def __init__(self, source: SdkSource):
         self.b = source
 
-    def list_option_underlyings(self, r: EmptyRequest) -> Tuple[str, ...]:
+    def list_option_underlyings(self, r: RefreshRequest) -> Tuple[str, ...]:
         source = self.b.call('get_option_undl_data', None)
         today = v.market_date()
         return tuple(code for code in v.identities(source)
                      if self.b.candidates(code, today))
 
-    def get_details(self, r: CodesRequest) -> BatchResult[Instrument]:
+    def get_details(self, r: CachedCodesRequest) -> BatchResult[Instrument]:
         def one(code):
             row = self.b.call('get_instrument_detail', code, True)
             if row is None:

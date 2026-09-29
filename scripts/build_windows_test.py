@@ -23,9 +23,15 @@ bundle = work / name
 bundle.mkdir()
 wheel = next(p for p in packages if p.suffix == '.whl')
 shutil.copy2(wheel, bundle / wheel.name)
-subprocess.run([str(python), str(root / 'scripts/build_bigqmt_strategy.py'), '--output', str(bundle / 'bigqmt_strategy.py')], check=True)
+(source / 'scripts').mkdir()
+shutil.copy2(root / 'scripts/build_bigqmt_strategy.py', source / 'scripts/build_bigqmt_strategy.py')
+subprocess.run([str(python), str(source / 'scripts/build_bigqmt_strategy.py'), '--output', str(bundle / 'bigqmt_strategy.py')], check=True)
 shutil.copy2(root / 'scripts/check_bigqmt_bridge.py', bundle / 'check_bigqmt_bridge.py')
 shutil.copy2(root / 'LICENSE', bundle / 'LICENSE')
+for filename in ('verify-install.py', '.env.example'):
+    shutil.copy2(root / filename, bundle / filename)
+shutil.copy2(root / 'scripts/verify_persistent_data.py', bundle / 'verify_persistent_data.py')
+shutil.copy2(root / 'docs/design/persistent-cache.md', bundle / 'persistent-cache.md')
 
 def bat(name, content):
     (bundle / name).write_bytes(content.replace('\n', '\r\n').encode('ascii'))
@@ -54,7 +60,7 @@ if errorlevel 1 goto failed
 if errorlevel 1 goto failed
 ".venv\\Scripts\\python.exe" -m pip check
 if errorlevel 1 goto failed
-".venv\\Scripts\\python.exe" -c "from qmt_rpyc.version import __version__; print('Installed:', __version__)"
+".venv\\Scripts\\python.exe" verify-install.py --expected-version "BUILD_VERSION"
 if errorlevel 1 goto failed
 echo Installation complete. See README.txt, then run check-readonly.bat.
 pause
@@ -63,7 +69,7 @@ exit /b 0
 echo Installation failed. Review the error above.
 pause
 exit /b 1
-'''.replace('WHEEL_NAME', wheel.name))
+'''.replace('WHEEL_NAME', wheel.name).replace('BUILD_VERSION', version))
 
 bat('check-readonly.bat', '''@echo off
 setlocal
@@ -89,6 +95,7 @@ if not exist ".venv\\Scripts\\qmt-rpyc-server.exe" (
     exit /b 1
 )
 set "QMT_RPYC_ADAPTER=bigqmt"
+set "QMT_RPYC_CACHE_PATH=%~dp0data.sqlite3"
 if not defined QMT_RPYC_DEBUG set "QMT_RPYC_DEBUG=0"
 if not exist "config.env" (
     echo Copy your existing config.env into this directory before starting.
@@ -108,59 +115,52 @@ exit /b 1
 
 bat('start-debug-server.bat', '\n'.join(('@echo off', 'setlocal', 'set "QMT_RPYC_DEBUG=1"', 'call "%~dp0start-server.bat"', 'exit /b %ERRORLEVEL%', '')))
 
-readme = f'''BigQMT Windows 实机测试包
+readme = f'''BigQMT Windows 数据存储层测试包
 构建版本：{version}
 
-此包用于当前策略桥及交易接口联调，未发布到 PyPI，不是正式版本。
-包含当前工作区实现；不包含账户、认证密钥、终端路径或本地日志。
+当前未提交工作区的独立测试构建，未发布；契约与策略协议均为 8。
+不包含真实配置、认证密钥、账户或日志。需联网从 PyPI 安装依赖。
 
-一、准备
-1. 解压 ZIP 到一个独立目录，不能直接在 ZIP 内运行批处理。
-2. 外部环境需安装 Windows 64 位 Python 3.11（或 3.10）及 py 启动器。
-   QMT 内置 Python 3.6.8 无需安装本项目或依赖，也不要修改它。
-3. 双击 install.bat。安装到本目录 .venv；需联网访问 PyPI 下载依赖。
-   本包不是完整离线依赖包。
+一、安装与启动
+1. 解压到独立目录；安装 Windows 64 位 Python 3.11 或 3.10（包含 py 启动器）。
+   QMT 内置 Python 3.6.8 无需安装依赖或修改。
+2. 运行 install.bat，创建独立 .venv，验证 wheel、策略版本和策略指纹一致。
+3. 停止旧服务和旧桥策略，保留旧安装目录与策略作为回退。
+   将已有 config.env 复制到本目录，保留监听地址、认证密钥与管道配置。
+   没有现成配置时，可参考 .env.example；不要把配置发回或公开。
+4. 将 bigqmt_strategy.py 按 GBK 编码导入 QMT 并运行。
+   策略 ready 日志中的 version 应为 {version}。
+   默认管道 qmt_rpyc_bridge_v1；自定义管道须同时匹配策略、服务与检查参数。
+5. 运行 check-readonly.bat；自定义管道使用 --pipe 管道名。
+   默认检查行情、日 K、证券资料、日历和期权，不下单、不撤单、不显式下载。
+   --extended 额外检查全市场快照与指数权重，可能较慢。
+6. 运行 start-debug-server.bat 进行数据核对；普通启动用 start-server.bat。
+   调试入口需共享密钥认证。策略和服务具备交易能力；本包检查不调用交易。
+   测试客户端也需安装随附 wheel，不能沿用旧契约客户端。
 
-二、只读联调（先只做这一步）
-1. 停止之前的探针策略。在完整 QMT 新建一个独立策略，将 bigqmt_strategy.py
-   按 GBK 编码打开，全部内容复制进去并以 GBK 保存运行，不要同时运行两个同名桥。
-2. 看到 QMT_RPYC_BRIDGE ready; read_only=False; protocol=4 后，
-   双击 check-readonly.bat。QMT 与该窗口请使用同一 Windows 用户运行。
-3. 发回检查窗口的输出及 QMT 相关错误文字即可，不需要账号或订单号。
-   此检查只读取快照、两根日 K、证券资料、两个交易日和一个期权样本；
-   不读账户，不下单/撤单，不查询财务，不显式下载。
-4. 如需更广的只读覆盖，可在命令提示符运行 check-readonly.bat --extended。
-   首次先使用默认检查，扩展检查可能较慢。
-5. 测试结束在 QMT 停止策略；记录 pending_handles_retained 的值。
+二、数据存储验收
+启动脚本固定使用本解压目录 data.sqlite3，避免复用原环境数据库。
+缓存策略使用配置中的 QMT_RPYC_CACHE_POLICIES（未设置则使用默认策略）。
+选定一个已结束的历史日期区间，以相同证券和参数重复读取日 K：
+- 首次读取建立缓存；第二次应复用，比较数据一致性和耗时。
+- 重启服务后再次读取，确认数据持久化且结果一致。
+- 使用 refresh=True 读取，确认从源更新，后续读取结果一致。
+- 核对 health 中的持久化状态；异常时记录错误，不发送密钥或账户信息。
+复权核对脚本 verify_persistent_data.py 使用客户端 debug profile；先运行 --help
+查看证券与日期参数，再在已配置 profile 的客户端环境执行。它验证源数据与
+本地推导的一致性，不替代以上服务缓存命中验收。
 
-三、可选 RPyC 联调
-先将原测试目录的 config.env 复制到本目录，保留已有监听地址和认证密钥。
-只读检查通过后，双击 start-server.bat。启动脚本不会生成或覆盖配置；
-没有 config.env 时提示退出。远程测试需要沿用可访问的监听地址和共享密钥。
-请勿发送 config.env。已有系统环境变量可覆盖配置文件；遇到监听冲突请检查本地环境。
-客户端与服务均需使用本包 wheel 对应代码（契约 v4，仅日 K、五张财务表）。
-新环境不加载 xtquant；已提供 STOCK 账户交易接口，下单需由客户端显式调用。
-安装、启动及 check-readonly.bat 不会自动下单。debug 仍只允许只读原生调用。
+三、已知边界
+财务数据缺少完整性证明时仍回源；xtquant 分红和本地复权仍保守回源。
+不能可靠推导的停牌填充、特殊分红等场景仍由原数据源处理。
+当日 K 线不持久化。完整设计与边界见 persistent-cache.md。
+Linux 自动化验证不能代替本次 Windows/QMT 管道、数据与稳定性验收。
 
-调试：停止旧服务后运行 start-debug-server.bat，开启经过认证的只读原生调试。
-服务 wheel 与 QMT 策略必须一起升级到本包版本（私有协议 4）。
-普通启动尊重已有 QMT_RPYC_DEBUG 环境变量，否则默认关闭。
-
-四、验收边界
-已有本地自动化测试通过；此包仍需 Windows/QMT 真实数据、管道及长期稳定性验收。
-production_ready=false 是当前验收阶段标记。部分必需来源字段为空会明确报错，
-不填默认值或伪造成功。不支持的实机形态需要根据结果继续修正。
-卸载测试环境可在停止 QMT 策略和本包服务后删除解压目录。
-
-文件
-install.bat             创建独立环境并安装随附 wheel 与联网依赖
-bigqmt_strategy.py       QMT Python 3.6 GBK 单文件策略
-check-readonly.bat       本机只读检查
-check_bigqmt_bridge.py   检查脚本
-start-server.bat         可选 RPyC 服务启动
-start-debug-server.bat   开启只读调试的 RPyC 服务
-BUILD.json              构建版本及源码摘要
-SHA256SUMS.txt           包内文件 SHA-256
+四、回退与文件
+停止测试服务及策略后，恢复旧策略并启动旧安装目录即可。
+测试数据库留在本目录；服务停止后可删除整个目录清理测试环境。
+BUILD.json 记录版本和源码摘要，SHA256SUMS.txt 记录包内文件校验值。
+安装脚本不会创建或覆盖 config.env。本包不是完整离线依赖包。
 '''
 (bundle / 'README.txt').write_text(readme, encoding='utf-8-sig')
 manifest = {}
@@ -180,6 +180,6 @@ with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
     for p in sorted(bundle.iterdir()):
         z.write(p, arcname=name+'/'+p.name)
 (archive.with_suffix('.zip.sha256')).write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  '+archive.name+'\n')
-(root / 'dist/latest-windows-test.json').write_text(json.dumps(dict(version=version, archive=archive.name, wheel=wheel.name, staging=str(work)), indent=2)+'\n')
+(root / 'dist/latest-windows-test.json').write_text(json.dumps(dict(version=version, archive=archive.name, wheel=wheel.name), indent=2)+'\n')
 print('BUNDLE='+str(archive))
 print('STAGING='+str(work))

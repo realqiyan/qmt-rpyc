@@ -34,9 +34,6 @@ class DownloadService:
     def start_financials(self, request: FinancialDownloadRequest) -> TaskRef:
         return self._submit(self.provider.financials, 'FINANCIAL', request)
 
-    def start_sectors(self, request: EmptyRequest) -> TaskRef:
-        return self._submit(self.provider.sectors, 'SECTORS', request)
-
     def start_index_weights(self, request: EmptyRequest) -> TaskRef:
         return self._submit(self.provider.index_weights, 'INDEX_WEIGHTS', request)
 

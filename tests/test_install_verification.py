@@ -15,7 +15,7 @@ def checker():
 def test_current_install_reports_paths_and_both_compatibility_ids():
     check = checker()
     result = check.verify(check.version.__version__)
-    assert result['contract'] == result['bridge'] == 7
+    assert result['contract'] == result['bridge'] == 8
     assert Path(result['python']).is_file()
     assert Path(result['package']).is_dir()
 
@@ -30,8 +30,9 @@ def test_same_package_version_does_not_hide_stale_protocol(monkeypatch, capsys, 
 
 def test_wrong_wheel_version_fails_before_configuration(monkeypatch, capsys):
     check = checker()
-    assert check.main(['--expected-version', '0.8.0']) == 1
-    assert 'Expected qmt-rpyc 0.8.0' in capsys.readouterr().err
+    wrong_version = check.version.__version__ + '+mismatch'
+    assert check.main(['--expected-version', wrong_version]) == 1
+    assert 'Expected qmt-rpyc ' + wrong_version in capsys.readouterr().err
 
 
 def test_bundle_strategy_is_checked_without_executing_it(tmp_path):
@@ -45,7 +46,7 @@ def test_bundle_strategy_is_checked_without_executing_it(tmp_path):
     path.write_bytes((source + '\n# edited after packaging\n').encode('gbk'))
     with pytest.raises(ValueError, match='fingerprint mismatch'):
         check.verify_strategy(path, check.verify())
-    path.write_bytes(source.replace('BRIDGE_VERSION = 7', 'BRIDGE_VERSION = 4').encode('gbk'))
+    path.write_bytes(source.replace('BRIDGE_VERSION = 8', 'BRIDGE_VERSION = 4').encode('gbk'))
     with pytest.raises(ValueError, match='does not match'):
         check.verify_strategy(path, check.verify())
 
