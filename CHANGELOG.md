@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1] - 2026-09-29
+
+- Release the validated 0.8.1rc2 runtime as stable on PyPI, with no runtime changes beyond the version and CLI version example.
+- Includes local client/server updates and background server management, with Windows venv startup timeout and blank-console fixes.
+- Windows deployment validation confirmed rc1-to-rc2 upgrade via `update --pre`, successful background startup and QMT connection, no blank console, and continued service after closing the terminal.
+- Public contract and BigQMT bridge compatibility identifiers remain 8.
+
 ## [0.8.1rc2] - 2026-09-29
 
 - Fix background startup falsely timing out under Windows virtual environments, where the Python launcher and server interpreter have different PIDs. Match readiness to a unique launch identifier instead.

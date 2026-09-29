@@ -1,7 +1,7 @@
 # 版本与构建标识
 
 客户端、服务端、Windows 安装包和 QMT 策略统一使用软件发行版本，例如
-`0.8.1rc2`。唯一的 Python 版本定义是 `src/qmt_rpyc/version.py`；策略生成器和
+`0.8.1`。唯一的 Python 版本定义是 `src/qmt_rpyc/version.py`；策略生成器和
 发布流程读取该文件，不再手工维护策略版本。安装器的下载版本固定值和文档
 示例在发布准备时同步更新。
 
@@ -12,7 +12,7 @@ PATCH；预发布使用 `rcN`。已发布版本及标签不可覆盖。未发布
 策略启动日志示例：
 
 ```text
-QMT_RPYC_BRIDGE ready; version=0.8.1rc2; build=<16位十六进制指纹>; read_only=False
+QMT_RPYC_BRIDGE ready; version=0.8.1; build=<16位十六进制指纹>; read_only=False
 ```
 
 `build` 是生成策略内容的 SHA-256 前 16 位，自动计算、可重复生成，用于识别
