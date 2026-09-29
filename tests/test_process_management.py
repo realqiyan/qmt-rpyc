@@ -32,14 +32,30 @@ def test_lock_is_exclusive_and_stale_pid_is_not_authority(local_runtime):
     assert not processes.running()
 
 
-def test_real_background_control_and_duplicate_start(local_runtime, tmp_path, monkeypatch):
+@pytest.mark.parametrize('launcher', ['direct', 'redirector', pytest.param(
+    'windows_venv', marks=pytest.mark.skipif(os.name != 'nt', reason='Windows venv redirector'))])
+def test_real_background_control_and_duplicate_start(local_runtime, tmp_path, monkeypatch, launcher):
     config = tmp_path / 'a config.env'
     config.write_text('')
     original = subprocess.Popen
+    executable = sys.executable
+    if launcher == 'windows_venv':
+        import venv
+        environment_path = tmp_path / 'venv'
+        venv.EnvBuilder(with_pip=False, system_site_packages=True).create(environment_path)
+        executable = str(environment_path / 'Scripts' / 'python.exe')
+        monkeypatch.setattr(processes.sys, 'executable', executable)
+        monkeypatch.setattr(processes.sys, 'prefix', str(environment_path))
     script = '''
-import sys, threading
+import os, sys, threading
 from qmt_rpyc.server import main as app
 from qmt_rpyc.server.managed import run
+if os.name == 'nt':
+    import ctypes
+    from ctypes import wintypes
+    ctypes.windll.kernel32.GetConsoleWindow.restype = wintypes.HWND
+    ctypes.windll.user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    assert not ctypes.windll.user32.IsWindowVisible(ctypes.windll.kernel32.GetConsoleWindow())
 class Server:
     active = True
     def __init__(self): self.done = threading.Event()
@@ -54,14 +70,23 @@ def fake(config, verbose=False, runtime=None):
 app.main = fake
 run(sys.argv[1])
 '''
+    children = []
     def spawn(command, **kwargs):
-        return original([sys.executable, '-c', script, str(config)], **kwargs)
+        command = [executable, '-c', script, str(config)]
+        if launcher == 'redirector':
+            command = [executable, '-c',
+                       'import subprocess, sys; sys.exit(subprocess.call(sys.argv[1:]))'] + command
+        child = original(command, **kwargs)
+        children.append(child)
+        return child
     monkeypatch.setattr(processes.subprocess, 'Popen', spawn)
     try:
         with processes.command_lock():
-            result = processes.launch(config)
+            result = processes.launch(config, timeout=10)
         assert result['rpc_ready']
         assert result['pid'] != os.getpid()
+        if launcher in ('redirector', 'windows_venv'):
+            assert result['pid'] != children[0].pid
         assert processes.read_state()['config'] == str(config)
         with pytest.raises(RuntimeError, match='already has'):
             processes.launch(config)
@@ -72,6 +97,91 @@ run(sys.argv[1])
     finally:
         if processes.running():
             processes.stop()
+        for child in children:
+            child.wait(timeout=10)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows console launcher lifecycle')
+def test_windows_background_survives_start_command_exit(local_runtime, tmp_path, monkeypatch):
+    import venv
+    from pip._vendor.distlib.scripts import ScriptMaker
+
+    environment_path = tmp_path / 'venv'
+    venv.EnvBuilder(with_pip=False, system_site_packages=True).create(environment_path)
+    executable = str(environment_path / 'Scripts' / 'python.exe')
+    monkeypatch.setattr(processes.sys, 'prefix', str(environment_path))
+    stub = tmp_path / 'stub_server.py'
+    stub.write_text('''
+import threading
+from qmt_rpyc.server import main as app
+from qmt_rpyc.server.managed import main
+class Server:
+    active = True
+    def __init__(self): self.done = threading.Event()
+    def close(self):
+        self.active = False
+        self.done.set()
+def fake(config, verbose=False, runtime=None):
+    server = Server()
+    runtime.attach(server, None, None)
+    server.done.wait(30)
+    return 0
+app.main = fake
+main()
+''', encoding='utf-8')
+    entry = tmp_path / 'start_entry.py'
+    entry.write_text('''
+def main():
+    import json, subprocess, sys
+    from qmt_rpyc.cli import processes
+    original = subprocess.Popen
+    def spawn(command, **kwargs):
+        return original([sys.executable, sys.argv[1]] + command[3:], **kwargs)
+    processes.subprocess.Popen = spawn
+    with processes.command_lock():
+        print(json.dumps(processes.launch(sys.argv[2], timeout=10)))
+''', encoding='utf-8')
+    maker = ScriptMaker(None, str(tmp_path))
+    maker.executable = executable
+    maker.variants = {''}
+    maker.make('qmt-rpyc-server = start_entry:main')
+    environment = dict(os.environ)
+    environment['PYTHONPATH'] = str(tmp_path) + os.pathsep + environment['PYTHONPATH']
+    try:
+        result = subprocess.run([str(tmp_path / 'qmt-rpyc-server.exe'), str(stub),
+                                 str(tmp_path / 'config.env')], env=environment,
+                                capture_output=True, text=True, timeout=15)
+        assert result.returncode == 0, result.stderr
+        started = json.loads(result.stdout)
+        assert started['rpc_ready']
+        # The console executable and its interpreter have both exited. The
+        # background interpreter must still answer authenticated local control.
+        time.sleep(.2)
+        status = processes.status()
+        assert status['rpc_ready']
+        assert status['pid'] == started['pid']
+    finally:
+        if processes.running():
+            processes.stop()
+
+
+def test_launch_rejects_readiness_from_another_launch(local_runtime, monkeypatch):
+    class Child:
+        pid = 123
+        def poll(self):
+            return None
+    environment = {'EXAMPLE': 'preserved'}
+    captured = []
+    monkeypatch.setattr(processes, 'running', lambda: False)
+    monkeypatch.setattr(processes.subprocess, 'Popen',
+                        lambda *a, **kw: captured.append(kw['env']) or Child())
+    monkeypatch.setattr(processes, 'status', lambda: dict(
+        rpc_ready=True, pid=123, launch_id='an-earlier-launch'))
+    with pytest.raises(RuntimeError, match='startup not ready'):
+        processes.launch('config.env', timeout=.01, environment=environment)
+    assert environment == {'EXAMPLE': 'preserved'}
+    assert captured[0]['EXAMPLE'] == 'preserved'
+    assert captured[0]['QMT_RPYC_LAUNCH_ID'] != 'an-earlier-launch'
 
 
 def test_drain_waits_for_requests_and_downloads_and_rejects_new_work():

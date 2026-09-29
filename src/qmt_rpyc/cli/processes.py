@@ -151,19 +151,26 @@ def launch(config, verbose=False, timeout=30, environment=None):
         command.append('--verbose')
     options = {}
     if os.name == 'nt':
-        options['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        # A detached venv launcher can give its interpreter a new visible
+        # console. A windowless console is inherited through that redirector.
+        options['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
     else:
         options['start_new_session'] = True
     log = runtime_dir() / 'server.log'
+    # Windows venv python.exe may be a redirector whose PID differs from the
+    # interpreter's. Correlate readiness with this launch, not the launcher PID.
+    launch_id = secrets.token_hex(16)
+    child_environment = dict(os.environ if environment is None else environment)
+    child_environment['QMT_RPYC_LAUNCH_ID'] = launch_id
     with log.open('ab') as output:
         child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
-                                 stderr=output, env=environment, **options)
+                                 stderr=output, env=child_environment, **options)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if child.poll() is not None:
             raise RuntimeError('Server exited during startup; inspect {}'.format(log))
         result = status()
-        if result.get('rpc_ready') and result.get('pid') == child.pid:
+        if result.get('rpc_ready') and result.get('launch_id') == launch_id:
             return result
         time.sleep(.1)
     raise RuntimeError('Server startup not ready within {} seconds; process may still '

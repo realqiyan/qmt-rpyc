@@ -11,6 +11,7 @@ from qmt_rpyc.server.draining import RequestGate
 
 class Runtime:
     def __init__(self):
+        self.launch_id = os.environ.pop('QMT_RPYC_LAUNCH_ID', None)
         self.gate = RequestGate()
         self.server = None
         self.downloads = None
@@ -27,7 +28,7 @@ class Runtime:
         if command == 'status':
             ready = bool(self.server and self.server.active and not self._closing)
             return dict(status='stopping' if self._closing else 'running',
-                        pid=os.getpid(), rpc_ready=ready)
+                        pid=os.getpid(), rpc_ready=ready, launch_id=self.launch_id)
         if command != 'stop':
             return dict(status='error', message='Unknown local control command')
         if not self._stop_lock.acquire(blocking=False):

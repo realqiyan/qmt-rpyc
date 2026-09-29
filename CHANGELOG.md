@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.1rc2] - 2026-09-29
+
+- Fix background startup falsely timing out under Windows virtual environments, where the Python launcher and server interpreter have different PIDs. Match readiness to a unique launch identifier instead.
+- Start Windows background servers without a visible console, including when the virtual-environment launcher creates a separate interpreter process.
+
 ## [0.8.1rc1] - 2026-09-29
 
 - Publish a release candidate to TestPyPI for Windows validation; preserve public contract and BigQMT compatibility identifiers at 8.
