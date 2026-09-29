@@ -28,6 +28,7 @@ CLIENT_TESTS=(
     "tests/test_architecture.py"
     "tests/test_config.py"
     "tests/test_cli.py"
+    "tests/test_update.py"
     "tests/test_auth_limiter.py"
     "tests/test_datetime_boundaries.py"
     "tests/test_event_bus.py"

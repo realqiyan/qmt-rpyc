@@ -176,7 +176,11 @@ def _cmd_init(args):
     current = _read_env(target)
     values = dict(current)
     values.update(imported)
-    adapter = _selected_adapter(values)
+    if args.adapter:
+        from qmt_rpyc.adapters.registry import select_adapter
+        adapter = select_adapter(args.adapter)
+    else:
+        adapter = _selected_adapter(values)
     values["QMT_RPYC_ADAPTER"] = adapter.name
     detected = detect_environment() if adapter.requires_native_sdk else {}
     addresses = private_ipv4_addresses()
@@ -424,11 +428,39 @@ def _cmd_check(args):
 
 
 def _cmd_start(args):
-    from qmt_rpyc.server.main import main as server_main
-    return server_main(
-        str(config_path(args.config)),
-        verbose=args.verbose,
-    )
+    from qmt_rpyc.cli import processes
+    if args.foreground:
+        from qmt_rpyc.server.managed import run
+        return run(str(config_path(args.config).resolve()), args.verbose, foreground=True)
+    with processes.command_lock():
+        result = processes.launch(config_path(args.config), args.verbose)
+    _emit(result, args.compact)
+    return 0
+
+
+def _cmd_stop(args):
+    from qmt_rpyc.cli import processes
+    with processes.command_lock():
+        result = processes.stop(args.timeout)
+    _emit(result, args.compact)
+    return 0
+
+
+def _cmd_restart(args):
+    from qmt_rpyc.cli import processes
+    with processes.command_lock():
+        state = processes.read_state()
+        path = args.config or state.get('config') or config_path()
+        environment = dict(os.environ)
+        # Reproduce original overrides, rather than unrelated shell overrides.
+        for key in list(environment):
+            if key.startswith(('QMT_', 'QMT_RPYC_')):
+                del environment[key]
+        environment.update(state.get('overrides', {}))
+        processes.stop(args.timeout)
+        result = processes.launch(path, state.get('verbose', False), environment=environment)
+    _emit(result, args.compact)
+    return 0
 
 
 def _client_from_server_config(path):
@@ -449,38 +481,30 @@ def _client_from_server_config(path):
         host,
         port=int(values.get("QMT_RPYC_PORT", "18812")),
         auth_key=values.get("QMT_RPYC_AUTH_KEY"),
+        timeout=3,
         tls_config=tls,
     )
 
 
 def _cmd_status(args):
-    with _client_from_server_config(config_path(args.config)) as client:
-        from qmt_rpyc.transport.codec import encode
-        _emit(encode(client.system.get_health()), args.compact)
+    from qmt_rpyc.cli import processes
+    result = processes.status()
+    if result.get('rpc_ready'):
+        state = processes.read_state()
+        try:
+            with _client_from_server_config(state.get('config') or config_path(args.config)) as client:
+                from qmt_rpyc.transport.codec import encode
+                result['health'] = encode(client.system.get_health())
+        except Exception as exc:
+            result['health_error'] = str(exc)
+    _emit(result, args.compact)
     return 0
 
 
 def _cmd_update(args):
-    path = config_path(args.config)
-    if path.exists():
-        backup = path.with_suffix(
-            ".env.backup-{}".format(
-                datetime.now().strftime("%Y%m%d%H%M%S")
-            )
-        )
-        shutil.copy2(path, backup)
-    requirement = "qmt-rpyc[server]"
-    if args.pre:
-        command = [
-            sys.executable, "-m", "pip", "install", "--upgrade", "--pre",
-            requirement,
-        ]
-    else:
-        command = [
-            sys.executable, "-m", "pip", "install", "--upgrade", requirement,
-        ]
-    subprocess.run(command, check=True)
-    return _cmd_check(args)
+    from qmt_rpyc.cli.update import execute
+    _emit(execute(args, server=True, config=str(config_path(args.config).resolve())), args.compact)
+    return 0
 
 
 def _cmd_uninstall(args):
@@ -660,6 +684,8 @@ Global options must appear before COMMAND. Run
         "--import-env",
         help="import initial values from this .env file",
     )
+    init.add_argument("--adapter", choices=("xtquant_2.0.6.1", "bigqmt"),
+                      help="persist the QMT adapter selection")
     init.add_argument("--host", help="server listen address")
     init.add_argument("--port", type=int, help="server listen port")
     init.add_argument(
@@ -699,29 +725,35 @@ If configuration is missing or invalid, run:
     check.set_defaults(func=_cmd_check)
     start = sub.add_parser(
         "start",
-        help="run the server in the foreground",
+        help="start the server in the background",
         description=(
-            "Connect to QMT and run the RPyC server in the foreground so "
-            "startup and runtime messages remain visible."
+            "Start one background server for this Python environment. "
+            "Use --foreground to debug in the current console."
         ),
         epilog="""Example:
   qmt-rpyc-server start
 
-Press Ctrl-C once to stop accepting clients, close workers, disconnect from
-QMT, and return to the command prompt.""",
+Use qmt-rpyc-server stop to drain requests and stop the background service.
+For console debugging: qmt-rpyc-server start --foreground""",
     )
     start.add_argument(
         "--verbose",
         action="store_true",
         help="enable verbose server logging",
     )
+    start.add_argument("--foreground", action="store_true", help="run in the current console")
     start.set_defaults(func=_cmd_start)
+    for name, handler in (("stop", _cmd_stop), ("restart", _cmd_restart)):
+        child = sub.add_parser(name, help=name + " the local server",
+                               description=name.capitalize() + " the local server after draining requests.")
+        child.add_argument("--timeout", type=float, default=60, help="drain timeout in seconds (default: 60)")
+        child.set_defaults(func=handler)
     status = sub.add_parser(
         "status",
         help="query the health of a running local server",
         description=(
-            "Connect using the server configuration and return the live "
-            "server health payload."
+            "Report local process state even when RPC is unavailable, "
+            "and include live health when available."
         ),
         epilog="""Example:
   qmt-rpyc-server status""",
@@ -737,21 +769,12 @@ QMT, and return to the command prompt.""",
     ))
 
     update = sub.add_parser(
-        "update",
-        help="upgrade qmt-rpyc and re-run server checks",
-        description=(
-            "Back up config.env, upgrade qmt-rpyc[server] with the current "
-            "Python interpreter, then run the server checks."
-        ),
-        epilog="""Examples:
-  qmt-rpyc-server update
-  qmt-rpyc-server update --pre""",
+        "update", help="upgrade this local environment without starting the server",
+        description="Drain and stop the local server, install and verify the target package, then print next steps.",
+        epilog="Examples:\n  qmt-rpyc-server update\n  qmt-rpyc-server update --pre\n  qmt-rpyc-server update --version 0.8.1rc1",
     )
-    update.add_argument(
-        "--pre",
-        action="store_true",
-        help="allow installation of a pre-release version",
-    )
+    from qmt_rpyc.cli.update import add_arguments
+    add_arguments(update)
     update.set_defaults(func=_cmd_update)
 
     uninstall = sub.add_parser(

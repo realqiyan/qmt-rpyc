@@ -51,34 +51,6 @@ def test_bundle_strategy_is_checked_without_executing_it(tmp_path):
         check.verify_strategy(path, check.verify())
 
 
-@pytest.mark.skipif(__import__('sys').platform != 'win32', reason='requires Windows cmd.exe')
-@pytest.mark.parametrize('verification_exit', [0, 1])
-def test_managed_launcher_checks_install_before_starting_server(tmp_path, verification_exit):
-    import os
-    import shutil
-    import subprocess
-    import venv
-    bundle = tmp_path / 'bundle with spaces'
-    bundle.mkdir()
-    shutil.copy2('start-rpyc.bat', bundle / 'start-rpyc.bat')
-    # Simulate the verifier discovering stale files. Exercise the actual BAT
-    # branching/error propagation independently of the verifier unit tests.
-    (bundle / 'verify-install.py').write_text('raise SystemExit(%d)\n' % verification_exit)
-    local = tmp_path / 'local data'
-    managed = local / 'qmt-rpyc'
-    venv.EnvBuilder(with_pip=False).create(managed / 'venv')
-    marker = tmp_path / 'server-started'
-    (managed / 'qmt-rpyc-server.bat').write_bytes(
-        ('@echo off\r\necho started > "' + str(marker) + '"\r\n').encode())
-    env = dict(os.environ, LOCALAPPDATA=str(local))
-    result = subprocess.run(['cmd.exe', '/c', str(bundle / 'start-rpyc.bat')],
-                            env=env, input='\n', text=True, capture_output=True, timeout=30)
-    assert result.returncode == verification_exit
-    assert marker.exists() == (verification_exit == 0)
-    assert 'Environment: managed' in result.stdout
-    assert ('Incomplete or outdated installation' in result.stdout) == (verification_exit != 0)
-
-
 def test_legacy_install_without_bigqmt_has_actionable_error(monkeypatch, capsys):
     import builtins
     import runpy

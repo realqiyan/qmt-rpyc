@@ -1,5 +1,7 @@
 """request boundary; only JSON primitives cross RPyC."""
 import logging
+from contextlib import nullcontext
+
 
 from qmt_rpyc.adapters.errors import ProviderError
 from qmt_rpyc.adapters.interfaces import Providers
@@ -9,6 +11,7 @@ from qmt_rpyc.contracts.system import Capabilities, Capability
 from qmt_rpyc.contracts.validation import validate_result
 from qmt_rpyc.transport import codec
 
+from .draining import DrainingError
 from .download_service import DownloadService
 from .system import SystemService
 
@@ -17,7 +20,7 @@ MAX_REQUEST_BYTES = 1024 * 1024
 
 class Dispatcher:
     """Backend injection is the sole SDK seam; public codec stays unchanged."""
-    def __init__(self, providers: Providers, downloads=None, health=lambda: {}, active_clients=lambda: 0):
+    def __init__(self, providers: Providers, downloads=None, health=lambda: {}, active_clients=lambda: 0, gate=None):
         from qmt_rpyc.contracts.operations import OPERATIONS
         capabilities = dict(providers.capabilities.operations)
         if downloads is None:
@@ -25,6 +28,7 @@ class Dispatcher:
                 if name.startswith('downloads.'):
                     capabilities[name] = Capability(False, None, 'download manager unavailable')
         self.capabilities = Capabilities(capabilities)
+        self.gate = gate
         self.providers = providers
         services = {group: getattr(providers, group) for group in
                     ('reference', 'instruments', 'options', 'market', 'financials', 'trading')}
@@ -63,13 +67,17 @@ class Dispatcher:
             capability = self.capabilities.operations[operation]
             if not capability.available:
                 raise ProviderError('API_UNAVAILABLE', operation, capability.reason)
-            phase = 'sdk_execution'
-            value = self._handlers[operation](request)
-            phase = 'result_validation'
-            result = codec.decode(descriptor.response_type, codec.encode(value))
-            validate_result(operation, request, result)
-            return codec.dumps(dict(contract_version=CONTRACT_VERSION, request_id=request_id,
-                                    operation=operation, status='ok', data=result))
+            with self.gate.admit() if self.gate else nullcontext():
+                phase = 'sdk_execution'
+                value = self._handlers[operation](request)
+                phase = 'result_validation'
+                result = codec.decode(descriptor.response_type, codec.encode(value))
+                validate_result(operation, request, result)
+                return codec.dumps(dict(contract_version=CONTRACT_VERSION, request_id=request_id,
+                                        operation=operation, status='ok', data=result))
+        except DrainingError as exc:
+            return self.error(request_id, operation, 'SERVER_DRAINING', str(exc),
+                              'pre_execution', 'not_executed')
         except ProviderError as exc:
             return self.error(request_id, operation, exc.category,
                               str(exc), exc.phase, exc.outcome)

@@ -168,7 +168,7 @@ def _print_startup_info(cfg, cm):
         print(line)
 
 
-def start_server(cfg, tls=None):
+def start_server(cfg, tls=None, runtime=None):
     _validate_config(cfg)
     logger.info("Starting qmt-rpyc server %s", __version__)
     cfg = dict(cfg)
@@ -228,6 +228,7 @@ def start_server(cfg, tls=None):
         XtquantService._connection_mgr = cm
         XtquantService._download_mgr = dm
         XtquantService._active_clients = 0
+        XtquantService._request_gate = runtime.gate if runtime else None
         # Validate SDK imports before opening the listener. Local installation
         # failures are fatal; Trader construction and connection run separately.
         workers = int(os.environ.get('QMT_BATCH_MAX_WORKERS', '8'))
@@ -246,7 +247,8 @@ def start_server(cfg, tls=None):
             result['persistent_data'] = repository.health()
             return result
         XtquantService._dispatcher = Dispatcher(providers, dm,
-            health, lambda: XtquantService._active_clients)
+            health, lambda: XtquantService._active_clients,
+            gate=runtime.gate if runtime else None)
 
         XtquantService._debug_handler = None
         if cfg.get('debug', False):
@@ -285,6 +287,8 @@ def start_server(cfg, tls=None):
                 XtquantService, hostname=host, port=port,
                 protocol_config=config, authenticator=authenticator)
 
+        if runtime is not None:
+            runtime.attach(server, dm, cm)
         cm.start()
         _print_startup_info(cfg, cm)
         logger.info("Starting RPyC server on %s:%d", host, port)
@@ -302,12 +306,13 @@ def start_server(cfg, tls=None):
             dm.shutdown()
         if cm is not None:
             cm.stop()
+        XtquantService._request_gate = None
         print("Server stopped.")
         logger.info("Server stopped")
     return 130 if interrupted else 0
 
 
-def main(config_path=None, verbose=False):
+def main(config_path=None, verbose=False, runtime=None):
     cfg = _load_config(config_path)
     _validate_config(cfg)
     setup_logging(cfg["log_dir"], verbose=verbose)
@@ -321,7 +326,9 @@ def main(config_path=None, verbose=False):
             "ca_certs": cfg["tls_ca_certs"],
         }
 
-    return start_server(cfg, tls)
+    if runtime is None:
+        return start_server(cfg, tls)
+    return start_server(cfg, tls, runtime=runtime)
 
 
 if __name__ == "__main__":

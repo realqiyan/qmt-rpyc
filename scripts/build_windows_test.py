@@ -103,7 +103,7 @@ if not exist "config.env" (
     pause
     exit /b 1
 )
-".venv\\Scripts\\qmt-rpyc-server.exe" --config "%~dp0config.env" start
+".venv\\Scripts\\qmt-rpyc-server.exe" --config "%~dp0config.env" start --foreground
 set "QMT_TEST_RESULT=%ERRORLEVEL%"
 pause
 exit /b %QMT_TEST_RESULT%

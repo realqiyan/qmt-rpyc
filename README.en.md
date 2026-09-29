@@ -2,7 +2,7 @@
 
 A typed Python bridge to a broker-customized QMT/MiniQMT deployment. The server runs on Windows with Python 3.10/3.11; clients support Python 3.9+ on Linux, macOS and Windows.
 
-Current source version: **0.8.0**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
+Current source version: **0.8.1rc1**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
 
 ## Install from source
 
@@ -17,18 +17,41 @@ On Windows, with 64-bit Python 3.10/3.11 and the broker SDK installed:
 
 ```bat
 scripts\setup.bat
-start-rpyc.bat
+.venv\Scripts\qmt-rpyc-server.exe --config .env start
 ```
 
-Source scripts create `.venv`, install server/development dependencies and explicitly use the checkout `.env`. In a source checkout, `start-rpyc.bat` prefers an initialized source environment; if absent, it uses the managed installation and its configuration.
+Source scripts create an editable `.venv` using the checkout `.env`. `start` now runs in the background under the current user; use `start --foreground` for debugging. Each Python environment manages one service instance.
 
-For Windows installation or upgrades, stop the existing server, run `install-server.bat`, then `start-rpyc.bat`. The installer prefers a single wheel beside the script; without one, it installs or upgrades from PyPI to the pinned release (currently 0.8.0). Existing configuration is preserved. It downloads third-party dependencies and installs into `%LOCALAPPDATA%\qmt-rpyc\venv`. For maintenance, use `"%LOCALAPPDATA%\qmt-rpyc\qmt-rpyc-server.bat" check`.
+For first installation, run `install-server.bat` (BigQMT: `install-server.bat --adapter bigqmt`). It prefers a single adjacent wheel, otherwise the pinned release (currently 0.8.1rc1 from TestPyPI), installs into `%LOCALAPPDATA%\qmt-rpyc\venv`, preserves configuration, and prints next commands. It refuses to overwrite an existing installation. Use the installed `%LOCALAPPDATA%\qmt-rpyc\venv\Scripts\qmt-rpyc-server.exe` with `start`, `stop`, `restart`, `status`, or `update` thereafter. `restart` preserves the original configuration and environment overrides. `status` distinguishes process state, RPC readiness and QMT connectivity; local process state remains available without RPC. Background log paths are included in command output. Windows services, boot startup and crash supervision are not included.
+
+### Local updates
+
+```bash
+qmt-rpyc-client update
+qmt-rpyc-server update
+qmt-rpyc-server update --pre
+qmt-rpyc-server update --version 0.8.1rc1
+```
+
+Updates affect the current local Python environment only. Stable releases come from official PyPI; `--pre` or an explicit prerelease version selects official TestPyPI for qmt-rpyc, while third-party dependencies come from official PyPI. Explicit versions may downgrade, including to versions without process management. Default updates never downgrade. Unchanged versions leave the service untouched. Editable installations must be updated through Git instead.
+
+After downloading the package and dependencies, updates drain the local service's requests and downloads for up to 60 seconds. Timeout cancels the update and restores admission without force-killing. Client updates also coordinate a service in the same environment. Configuration is retained and the server configuration is backed up. New processes verify the installed version and CLI loading. **Updates never start the service**; they print suggested next commands. Installation/verification failures report their stage, with no automatic rollback. QMT connectivity is not an installation success criterion.
+
+On Windows the command returns `scheduled` and a log path. A helper waits for the old CLI executable to exit before installing; `scheduled` does not mean success. Follow the printed PowerShell `Get-Content -LiteralPath "log path" -Wait` command to read the final result and recommendations (Ctrl-C after the final JSON), or use `type "log path"` in CMD. Coordinate client/server/BigQMT strategy versions when crossing MINOR versions; updating the Python package does not replace the strategy inside QMT.
+
 
 The managed server configuration lives in `%LOCALAPPDATA%\qmt-rpyc\config.env`. Client profiles use the platform configuration directory; credentials use the system keyring or `QMT_RPYC_AUTH_KEY`.
 
 Server environment variables override the selected configuration file (`--config PATH` or the default). Importing an existing `.env` without prompts requires `init --non-interactive --yes`.
 
-With `.[dev]` installed, `python -m build` creates a wheel/sdist; the release workflow separately assembles the Windows ZIP. Install the stable client with `pip install qmt-rpyc==0.8.0`, or the Windows server with `pip install "qmt-rpyc[server]==0.8.0"`.
+With `.[dev]` installed, `python -m build` creates a wheel/sdist; the release workflow separately assembles the Windows ZIP. This RC is published only to TestPyPI. For a first pip installation, download its wheel before resolving dependencies from production PyPI:
+
+```bat
+py -3.11 -m pip download --no-deps --only-binary=:all: --index-url https://test.pypi.org/simple "qmt-rpyc==0.8.1rc1"
+py -3.11 -m pip install --index-url https://pypi.org/simple "qmt_rpyc-0.8.1rc1-py3-none-any.whl[server]"
+```
+
+For the client, omit `[server]`; installations with the new updater can also use `qmt-rpyc-client update --pre`.
 
 Startup `SDK module` log entries show the imported xtquant modules and loaded native extension paths; `resolved` follows filesystem junctions. Use these paths to verify SDK upgrades: the adapter name does not identify the loaded SDK version.
 
@@ -104,11 +127,12 @@ Synthetic SDK and local socket tests are portable. Read-only deployment tests re
 This project does not distribute xtquant, QMT or MiniQMT. [MIT License](LICENSE).
 
 
-### Full QMT in 0.8.0
+### Full QMT in 0.8.1rc1
 
 Upgrade both client and server for public contract v8. The Windows release ZIP includes
 `bigqmt_strategy.py` encoded as GBK (private bridge protocol 8). Load it in full QMT,
-then use `install-bigqmt.bat` and `start-bigqmt.bat`; existing configuration is preserved.
+then install with `install-server.bat --adapter bigqmt` and use the installed
+`qmt-rpyc-server start`; existing configuration is preserved.
 Startup never submits trades. BigQMT trades use the STOCK account supplied per request.
 Debug remains read-only. Underlying discovery reuses only fresh Shanghai-day data;
 expired data requires synchronous source refresh, and refresh failures do not return stale lists.
@@ -116,12 +140,13 @@ Missing trading flags and settlement values are null. Submission/cancellation re
 
 ### Windows update checks
 
-Extract the complete Windows Release ZIP, keeping `verify-install.py`, the BAT
-scripts, wheel and strategy together. In PowerShell, run `./install-bigqmt.bat`,
-replace/restart the GBK strategy inside QMT, then run `./start-bigqmt.bat`.
-Stop the external RPyC server before installation; installing it does not replace
-the embedded strategy. Updated scripts force-replace the pinned package, verify
-compatibility IDs and the bundled strategy fingerprint, and display the selected
-Python/configuration paths. Existing credentials/configuration are preserved;
-environment overrides still apply. PowerShell uses `&` to invoke quoted executable
-paths and `$env:LOCALAPPDATA` for environment expansion, unlike CMD's `%LOCALAPPDATA%`.
+For first installation, extract the complete Windows Release ZIP with the installer, `verify-install.py`, wheel and strategy. Subsequent updates use the installed executable:
+
+```powershell
+& "$env:LOCALAPPDATA\qmt-rpyc\venv\Scripts\qmt-rpyc-server.exe" update
+# Read the update log and check its final result.
+# Replace/restart the matching GBK strategy inside QMT separately.
+& "$env:LOCALAPPDATA\qmt-rpyc\venv\Scripts\qmt-rpyc-server.exe" start
+```
+
+The bundle verifier remains a first-install/release acceptance tool; routine starts and updates do not depend on stale strategy files beside an old ZIP. Environment overrides still apply. Stop legacy foreground servers manually before first migrating to managed processes; local management does not take over or kill unregistered processes. PowerShell uses `&` for quoted executable paths and `$env:LOCALAPPDATA` for environment expansion, unlike CMD's `%LOCALAPPDATA%`.

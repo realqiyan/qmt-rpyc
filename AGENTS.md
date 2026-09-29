@@ -28,8 +28,6 @@ Windows server setup and startup:
 
 ```bat
 scripts\setup.bat
-start-rpyc.bat
-REM Equivalent source entry point:
 .venv\Scripts\qmt-rpyc-server.exe --config .env start
 ```
 
@@ -57,6 +55,8 @@ Important helpers:
 | `scripts/remote_bench.py` | Measures remote-call and batch-call performance. |
 
 ## Architecture and Data Flow
+
+`qmt-rpyc-server start` runs in the background by default; use `--foreground` for console debugging. Each Python environment manages one local process through `stop`, `restart`, and `status`. Both CLI `update` commands upgrade locally, reject editable installs, drain a running service, and leave it stopped while printing next steps.
 
 `server/main.py` composes typed SDK providers, task manager, dispatcher and authenticated RPyC service. RPC starts independently of background QMT connection attempts. `service.py` exposes contract negotiation and JSON operation calls, plus a separately gated SDK diagnostic RPC.
 

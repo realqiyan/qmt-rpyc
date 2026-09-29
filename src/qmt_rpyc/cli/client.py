@@ -258,10 +258,21 @@ def _cmd_debug(args):
         return EXIT_REMOTE
 
 
+def _cmd_update(args):
+    from qmt_rpyc.cli.update import execute
+    _emit(execute(args), args.compact)
+    return 0
+
+
 def build_parser():
     parser = ArgumentParser(prog='qmt-rpyc-client', description='Inspect and invoke the typed QMT operation contract.')
     add_version_argument(parser)
     sub = parser.add_subparsers(dest='command', required=True)
+    from qmt_rpyc.cli.update import add_arguments
+    update = sub.add_parser('update', help='upgrade this local Python environment')
+    add_arguments(update)
+    update.add_argument('--compact', action='store_true')
+    update.set_defaults(func=_cmd_update)
     init = sub.add_parser('init', help='save a connection profile')
     _add_connection_options(init)
     for flag in ('ca-certs', 'certfile', 'keyfile'):
@@ -340,3 +351,7 @@ def main(argv=None):
     except (ValueError, KeyError, RuntimeError) as exc:
         _emit(dict(status='error', message=str(exc)), stream=sys.stderr)
         return EXIT_USAGE
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -46,5 +46,6 @@ if errorlevel 1 (
     echo [ERROR] Environment installed, but checks failed. Fix the reported configuration or SDK issue and rerun check.
     exit /b 1
 )
-echo Setup complete. Run start-rpyc.bat to start this checkout.
+echo Setup complete. Start this checkout with:
+echo "%CD%\.venv\Scripts\qmt-rpyc-server.exe" --config "%CD%\.env" start
 exit /b 0

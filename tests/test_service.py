@@ -317,3 +317,30 @@ def test_tick_timestamp_units_are_not_silently_reinterpreted(invoke, service, mo
     batch = value(invoke, 'market.get_ticks', codes=['GOOD.SH', 'BAD.SH'])
     assert [item.status for item in batch.items] == ['ok', 'error']
     assert batch.items[1].error.error_type == 'INVALID_RESULT'
+
+
+def test_maintenance_rejection_keeps_request_correlation_and_does_not_execute(invoke, service, monkeypatch):
+    from qmt_rpyc.server.draining import RequestGate
+    gate = RequestGate()
+    monkeypatch.setattr(service._dispatcher, 'gate', gate)
+    gate.drain(None, 1)
+    monkeypatch.setitem(service._dispatcher._handlers, 'market.get_ticks',
+                        lambda request: pytest.fail('maintenance must not execute SDK'))
+    result = invoke('market.get_ticks', codes=['600000.SH'])
+    assert result['request_id'] == 'test-request'
+    assert result['operation'] == 'market.get_ticks'
+    assert result['error']['error_type'] == 'SERVER_DRAINING'
+    assert result['error']['phase'] == 'pre_execution'
+    assert result['error']['outcome'] == 'not_executed'
+
+
+def test_debug_uses_the_same_maintenance_gate(service, monkeypatch):
+    from qmt_rpyc.server.draining import RequestGate
+    gate = RequestGate()
+    monkeypatch.setattr(type(service), '_request_gate', gate)
+    monkeypatch.setattr(type(service), '_debug_handler',
+                        staticmethod(lambda payload: pytest.fail('debug must not execute')))
+    gate.drain(None, 1)
+    result = codec.loads(service.exposed_debug('{}'))
+    assert result['error']['type'] == 'SERVER_DRAINING'
+    assert result['error']['outcome'] == 'not_executed'

@@ -1,5 +1,7 @@
 """Authenticated JSON RPC entry point."""
 import logging
+from contextlib import nullcontext
+
 import threading
 
 import rpyc
@@ -7,14 +9,19 @@ import rpyc
 from qmt_rpyc.contracts.errors import QmtAuthError
 from qmt_rpyc.contracts.operations import CONTRACT_HASH
 
+from .draining import DrainingError
+from .managed_protocol import ManagedConnection
+
 logger = logging.getLogger(__name__)
 
 class XtquantService(rpyc.Service):
+    _protocol = ManagedConnection
     _require_auth = True
     _connection_mgr = None
     _download_mgr = None
     _dispatcher = None
     _debug_handler = None
+    _request_gate = None
     _active_clients = 0
     _active_clients_lock = threading.Lock()
 
@@ -73,4 +80,12 @@ class XtquantService(rpyc.Service):
             return dumps({'status': 'error', 'error': {
                 'type': 'DEBUG_DISABLED', 'message': 'set QMT_RPYC_DEBUG=1 on the server and restart',
                 'phase': 'pre_execution', 'outcome': 'not_executed'}})
-        return self.__class__._debug_handler(payload)
+        gate = self.__class__._request_gate
+        try:
+            with gate.admit() if gate else nullcontext():
+                return self.__class__._debug_handler(payload)
+        except DrainingError as exc:
+            from qmt_rpyc.transport.codec import dumps
+            return dumps({'status': 'error', 'error': {
+                'type': 'SERVER_DRAINING', 'message': str(exc),
+                'phase': 'pre_execution', 'outcome': 'not_executed'}})

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.1rc1] - 2026-09-29
+
+- Publish a release candidate to TestPyPI for Windows validation; preserve public contract and BigQMT compatibility identifiers at 8.
+- Clarify QMT connection waiting, recovery and retry exhaustion logs without masking unexpected SDK failures.
+
+- Add shared local client/server updates with official PyPI stable releases, TestPyPI prereleases, exact-version downgrades, editable-install rejection, configuration backups and fresh-process verification. Updates leave services stopped and print next commands.
+- Manage one user-level background server per Python environment with start/stop/restart/status and foreground debugging. Local management works independently of business RPC; stopping waits for active requests, replies and downloads, restoring admission on timeout.
+- Hand Windows updates to a helper that waits for the old executable to exit and records the final result in a log. Do not automatically roll back or replay trading requests.
+- Consolidate Windows first installation into install-server.bat, persist adapter selection through init --adapter, and remove redundant install/start wrappers. Keep editable development setup scripts.
+
 ## [0.8.0] - 2026-09-29
 
 - Add server-owned SQLite business storage with typed provider decorators, category freshness policies, source-scoped coverage, synchronous refresh, per-security concurrency and fault degradation.

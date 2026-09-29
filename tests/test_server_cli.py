@@ -243,3 +243,18 @@ def test_non_interactive_existing_env_never_prompts(
     assert len(values['QMT_RPYC_AUTH_KEY']) >= 32
     assert values['QMT_RPYC_DEBUG'] == '1'
     assert values['QMT_RPYC_ALLOW_INSECURE'] == '1'
+
+
+def test_bigqmt_init_persists_adapter_without_wrapper(tmp_path, monkeypatch):
+    target = tmp_path / 'config.env'
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv('QMT_RPYC_ADAPTER', raising=False)
+    monkeypatch.setattr(cli, 'detect_environment', lambda: pytest.fail('must not probe MiniQMT'))
+    monkeypatch.setattr(cli, 'private_ipv4_addresses', lambda: [])
+    assert cli.main(['--config', str(target), 'init', '--adapter', 'bigqmt', '--non-interactive']) == 0
+    assert cli._read_env(target)['QMT_RPYC_ADAPTER'] == 'bigqmt'
+
+
+def test_update_version_is_not_global_version_flag():
+    parsed = cli.build_parser().parse_args(['update', '--version', '0.7.0'])
+    assert parsed.target_version == '0.7.0'
