@@ -87,4 +87,4 @@ BigQMT 同样支持 QMT_RPYC_DEBUG=1，需搭配私有协议 4 的策略。
 方法描述会返回 call_allowed，能描述的方法不一定允许调用。
 bridge.transport、bridge.cache_info、bridge.clear_cache 接受空参数，
 用于连接诊断及期权发现缓存管理。默认关闭，调试连接仍须认证。
-详见 [实机验证说明](../design/bigqmt-readonly-validation.md#缓存心跳与调试)。
+桥接实例的心跳与连接状态通过 `system.get_health` 查询；部署与配置见 README 的完整 QMT 小节。

@@ -52,7 +52,6 @@ Important helpers:
 | `scripts/dump_api_surface.py` | Dumps the actual broker-customized xtquant API surface from the Windows server environment as JSON. |
 | `scripts/setup.bat` | Creates the server environment, installs dependencies, and runs the environment check. |
 | `scripts/setup.sh` | Creates a cross-platform client virtual environment. |
-| `scripts/remote_bench.py` | Measures remote-call and batch-call performance. |
 
 ## Architecture and Data Flow
 
