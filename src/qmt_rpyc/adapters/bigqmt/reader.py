@@ -57,21 +57,6 @@ class StrategyReader:
     def get_index_weights(self, index, codes):
         return self._read_groups('index_weights', 'codes', codes, index=index)
 
-    def get_sector_trees(self, nodes):
-        return self._read_groups('sector_nodes', 'nodes', nodes)
-
-    def get_option_codes(self, underlying):
-        return self.transport.request('option_codes', {'underlying': underlying})
-
-    def get_option_underlying_map(self):
-        return self.transport.request('option_map', {})
-
-    def get_sector_tree(self, node):
-        return self.transport.request('sector_tree', {'node': node})
-
-    def get_sector_members(self, sector):
-        return self.transport.request('sector_members', {'sector': sector})
-
     def get_index_members(self, index):
         return self.transport.request('index_members', {'index': index})
 

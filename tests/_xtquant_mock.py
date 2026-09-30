@@ -114,15 +114,6 @@ class _XtData:
                                  stockGift=[0.0], allotNum=[0.0], allotPrice=[0.0], gugai=[0.0], dr=[1.01]),
                             index=['20250716'])
 
-    def get_stock_list_in_sector(self, sector_name):
-        return ['600000.SH']
-
-    def get_sector_list(self):
-        return ['沪深A股']
-
-    def download_sector_data(self):
-        return None
-
     def get_option_undl_data(self, undl_code_ref):
         return ['10000001.SH'] if undl_code_ref else {'510050.SH': ['10000001.SH']}
 

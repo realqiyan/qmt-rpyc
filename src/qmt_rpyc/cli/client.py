@@ -312,7 +312,7 @@ def build_parser():
     _add_connection_options(download)
     commands = download.add_subparsers(dest='download_command', required=True)
     start = commands.add_parser('start')
-    start.add_argument('kind', choices=('history', 'financials', 'sectors', 'index_weights'))
+    start.add_argument('kind', choices=('history', 'financials', 'index_weights'))
     start.add_argument('--payload', default='{}')
     status = commands.add_parser('status'); status.add_argument('task_id')
     wait = commands.add_parser('wait'); wait.add_argument('task_id')

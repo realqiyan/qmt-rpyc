@@ -29,12 +29,6 @@ def _get_option_undl_data(undl_code_ref):
 def _get_option_detail_data(optioncode):
     pass
 
-def _get_sector_list():
-    pass
-
-def _download_sector_data():
-    pass
-
 def _get_financial_data(stock_list, table_list=[], start_time='', end_time='', report_type='report_time'):
     pass
 
@@ -71,12 +65,9 @@ SIGNATURES = {
     'xtdata.download_history_data': inspect.signature(_download_history_data),
     'xtdata.get_market_data_ex': inspect.signature(_get_market_data_ex),
     'xtdata.get_divid_factors': inspect.signature(_get_divid_factors),
-    'xtdata.get_stock_list_in_sector': inspect.signature(_get_stock_list_in_sector),
     'xtdata.get_instrument_detail': inspect.signature(_get_instrument_detail),
     'xtdata.get_option_undl_data': inspect.signature(_get_option_undl_data),
     'xtdata.get_option_detail_data': inspect.signature(_get_option_detail_data),
-    'xtdata.get_sector_list': inspect.signature(_get_sector_list),
-    'xtdata.download_sector_data': inspect.signature(_download_sector_data),
     'xtdata.get_financial_data': inspect.signature(_get_financial_data),
     'xtdata.download_financial_data': inspect.signature(_download_financial_data),
     'xtdata.get_index_weight': inspect.signature(_get_index_weight),

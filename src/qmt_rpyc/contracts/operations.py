@@ -59,7 +59,7 @@ from qmt_rpyc.contracts.trading import (
 
 from .schema import schema
 
-CONTRACT_VERSION = 8
+CONTRACT_VERSION = 9
 
 
 @dataclass(frozen=True)
@@ -101,11 +101,12 @@ def manifest():
     return {
         "contract_version": CONTRACT_VERSION,
         "codec": "strict-json-utc-microseconds",
-        "behavior_revision": 1,
+        "behavior_revision": 2,
         "max_codes": MAX_CODES,
         "semantics": {
             "identity": "opaque; preserve broker suffix; no whitespace normalization",
             "date_range": "inclusive; daily bars and history downloads use dates; daily period only",
+            "daily_bars_window": "server resolved: an unset beginning is one year before the request end, and never precedes the reported listing date",
             "count": "positive; mutually exclusive with start; None means all in range",
             "expiry": "Shanghai market date, includes today; current discovery only",
             "batch": "one result per requested code, same order; no hidden retries",

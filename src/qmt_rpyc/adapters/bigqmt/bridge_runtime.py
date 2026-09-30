@@ -16,13 +16,12 @@ BAR_FIELDS = ('open', 'high', 'low', 'close', 'volume', 'amount', 'settelementPr
               'openInterest', 'preClose', 'suspendFlag', 'time')
 ARGUMENTS = {
     'ping': (), 'ticks': ('selectors',), 'instrument': ('code',), 'option_detail': ('code',),
-    'option_codes': ('underlying',), 'option_map': (), 'sector_tree': ('node',),
-    'sector_members': ('sector',), 'index_members': ('index',), 'index_weight': ('index', 'code'),
+    'option_codes': ('underlying',), 'option_map': (), 'index_members': ('index',),
+    'index_weight': ('index', 'code'),
     'dividends': ('code',), 'trading_dates': ('market', 'start', 'end', 'count'),
     'daily_bars': ('codes', 'start', 'end', 'count', 'adjustment', 'fill_data'),
     'financials': ('code', 'fields', 'start', 'end', 'date_basis'),
     'option_details': ('codes',), 'index_weights': ('index', 'codes'),
-    'sector_nodes': ('nodes',),
     'debug': ('request',),
     'trade_read': ('account', 'kind', 'cancelable_only'),
     'trade_submit': ('account', 'instrument', 'side', 'quantity', 'pricing', 'price', 'strategy_name', 'marker'),
@@ -124,9 +123,9 @@ class StrategyRuntime:
             raise ValueError('operation is outside the bridge allowlist')
         if not isinstance(args, dict) or set(args) != set(ARGUMENTS[operation]):
             raise ValueError('invalid bridge operation arguments')
-        for name in ('code', 'underlying', 'index', 'sector', 'node'):
+        for name in ('code', 'underlying', 'index'):
             if name in args and (type(args[name]) is not str or len(args[name]) > 256
-                                 or (not args[name] and name != 'node')):
+                                 or not args[name]):
                 raise ValueError('invalid bridge identity')
         for name in ('codes', 'selectors'):
             if name in args and (not isinstance(args[name], list) or not 0 < len(args[name]) <= 500
@@ -157,16 +156,6 @@ class StrategyRuntime:
                 result = {code: self._option_record(code) for code in args['codes']}
             else:
                 result = {code: self._context('get_weight_in_index', args['index'], code) for code in args['codes']}
-        elif operation == 'sector_nodes':
-            nodes = args['nodes']
-            if (type(nodes) is not list or not 0 < len(nodes) <= 16
-                    or any(type(node) is not str or len(node) > 256 for node in nodes)
-                    or len(set(nodes)) != len(nodes)):
-                raise ValueError('invalid sector node group')
-            method = self.global_api.get('get_sector_list')
-            if not callable(method):
-                raise NotImplementedError('required global sector reader is absent')
-            result = {node: method(node) for node in nodes}
         elif operation == 'ticks':
             selectors = args['selectors']
             if not isinstance(selectors, list) or not selectors or len(selectors) > 500:
@@ -190,13 +179,6 @@ class StrategyRuntime:
             result = self._context('get_option_undl_data', args['underlying'])
         elif operation == 'option_map':
             result = self._context('get_option_undl_data', '')
-        elif operation == 'sector_tree':
-            method = self.global_api.get('get_sector_list')
-            if not callable(method):
-                raise NotImplementedError('required global sector reader is absent')
-            result = method(args['node'])
-        elif operation == 'sector_members':
-            result = self._context('get_stock_list_in_sector', args['sector'])
         elif operation == 'index_members':
             result = self._context('get_sector', args['index'])
         elif operation == 'index_weight':

@@ -5,7 +5,7 @@ from qmt_rpyc.contracts.errors import QmtError
 
 
 def run_self_test(client, test_symbols=None, timeout=30):
-    symbols = {'sh_stock': '600000.SH', 'etf': '510050.SH', 'sector': '沪深A股', 'market': 'SH'}
+    symbols = {'sh_stock': '600000.SH', 'etf': '510050.SH', 'market': 'SH'}
     symbols.update(test_symbols or {})
     code, underlying = symbols['sh_stock'], symbols['etf']
     probes = {

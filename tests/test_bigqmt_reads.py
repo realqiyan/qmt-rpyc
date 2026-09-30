@@ -8,7 +8,7 @@ from qmt_rpyc.adapters.bigqmt.market import MarketAdapter, TICK_FIELDS
 from qmt_rpyc.adapters.bigqmt.instruments import InstrumentsAdapter
 from qmt_rpyc.adapters.bigqmt.reference import ReferenceAdapter
 from qmt_rpyc.adapters.errors import ProviderError
-from qmt_rpyc.contracts.common import CodesRequest, EmptyRequest
+from qmt_rpyc.contracts.common import CodesRequest
 from qmt_rpyc.contracts.market import DailyBarsQuery, MarketTicksRequest, TradingDatesRequest
 from qmt_rpyc.contracts.reference import DividendQuery, IndexWeightsRequest
 
@@ -110,20 +110,6 @@ def test_instruments_keep_placeholder_and_supplement_option_delivery():
     reference = InstrumentsAdapter(reader).get_trading_reference(CodesRequest(('000001.SZ',)))
     assert reference.require_all()['000001.SZ'].source_is_trading is None
     assert reference.require_all()['000001.SZ'].settlement_price is None
-
-
-def test_sector_traversal_uses_opaque_names_and_terminates_cycles():
-    calls = []
-    source = {'': [[], ['我的', '公开']], '我的': [['A'], ['公开']], '公开': [['B', 'A'], ['我的']]}
-    def read(node):
-        calls.append(node)
-        return source[node]
-    reader = SimpleNamespace(get_sector_trees=lambda nodes: {node: read(node) for node in nodes})
-    provider = ReferenceAdapter(reader)
-    assert provider.list_sectors(EmptyRequest()) == ('A', 'B')
-    assert calls == ['', '公开', '我的']
-    with pytest.raises(ValueError, match='exceeds'):
-        ReferenceAdapter(reader, max_tree_nodes=1).list_sectors(EmptyRequest())
 
 
 def test_weights_preserve_percentage_and_zero():

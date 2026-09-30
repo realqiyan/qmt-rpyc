@@ -36,5 +36,5 @@ def create_providers(connection=None, workers=8, environment=None):
 
 def storage_strategies(providers):
     from qmt_rpyc.adapters.storage_evidence import BigQmtCoverage
-    from qmt_rpyc.storage.adjustment import SampledBigQmtAdjustment
-    return dict(evidence=BigQmtCoverage(providers.market), adjustment=SampledBigQmtAdjustment())
+    from qmt_rpyc.storage.adjustment import AdjustmentPolicy
+    return dict(evidence=BigQmtCoverage(providers.market), adjustment=AdjustmentPolicy())

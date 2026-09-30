@@ -30,8 +30,5 @@ class DownloadAdapter:
     def financials(self, request: FinancialDownloadRequest) -> None:
         logger.info("BigQMT FINANCIAL: %s", COMPATIBILITY_DOWNLOAD_REASON)
 
-    def sectors(self, request: EmptyRequest) -> None:
-        logger.info("BigQMT SECTORS: %s", COMPATIBILITY_DOWNLOAD_REASON)
-
     def index_weights(self, request: EmptyRequest) -> None:
         logger.info("BigQMT INDEX_WEIGHTS: %s", COMPATIBILITY_DOWNLOAD_REASON)

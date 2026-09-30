@@ -15,7 +15,7 @@ def checker():
 def test_current_install_reports_paths_and_both_compatibility_ids():
     check = checker()
     result = check.verify(check.version.__version__)
-    assert result['contract'] == result['bridge'] == 8
+    assert result['contract'] == result['bridge'] == 9
     assert Path(result['python']).is_file()
     assert Path(result['package']).is_dir()
 
@@ -46,7 +46,7 @@ def test_bundle_strategy_is_checked_without_executing_it(tmp_path):
     path.write_bytes((source + '\n# edited after packaging\n').encode('gbk'))
     with pytest.raises(ValueError, match='fingerprint mismatch'):
         check.verify_strategy(path, check.verify())
-    path.write_bytes(source.replace('BRIDGE_VERSION = 8', 'BRIDGE_VERSION = 4').encode('gbk'))
+    path.write_bytes(source.replace('BRIDGE_VERSION = 9', 'BRIDGE_VERSION = 4').encode('gbk'))
     with pytest.raises(ValueError, match='does not match'):
         check.verify_strategy(path, check.verify())
 

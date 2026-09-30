@@ -28,8 +28,5 @@ class DownloadAdapter:
         start, end = sdk_range(request.start, request.end)
         self.source.call('download_financial_data', list(request.codes), list(request.tables), start, end)
 
-    def sectors(self, request: EmptyRequest) -> None:
-        self.source.call('download_sector_data')
-
     def index_weights(self, request: EmptyRequest) -> None:
         self.source.call('download_index_weight')

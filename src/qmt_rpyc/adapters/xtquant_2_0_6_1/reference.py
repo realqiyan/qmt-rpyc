@@ -1,12 +1,10 @@
 from typing import Tuple
 
-from qmt_rpyc.contracts.common import EmptyRequest
 from qmt_rpyc.contracts.reference import (
     DividendEvent,
     DividendQuery,
     IndexWeights,
     IndexWeightsRequest,
-    SectorMembersRequest,
 )
 
 from . import conversions as v
@@ -16,12 +14,6 @@ from .source import SdkSource
 class ReferenceAdapter:
     def __init__(self, source: SdkSource):
         self.b = source
-
-    def list_sectors(self, r: EmptyRequest) -> Tuple[str, ...]:
-        return tuple(v.identities(self.b.call('get_sector_list')))
-
-    def get_sector_members(self, r: SectorMembersRequest) -> Tuple[str, ...]:
-        return tuple(v.identities(self.b.call('get_stock_list_in_sector', r.sector)))
 
     def get_dividend_events(self, r: DividendQuery) -> Tuple[DividendEvent, ...]:
         start, end = v.sdk_range(r.start, r.end)

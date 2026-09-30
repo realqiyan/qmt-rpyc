@@ -25,14 +25,6 @@ class IndexWeights:
 
 
 @dataclass(frozen=True)
-class SectorMembersRequest:
-    sector: str
-
-    def __post_init__(self):
-        validate_identity(self.sector, "sector")
-
-
-@dataclass(frozen=True)
 class DividendQuery:
     code: str
     start: Optional[date] = None
