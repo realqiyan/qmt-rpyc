@@ -62,10 +62,23 @@ def test_a_bar_for_every_source_session_proves_a_closed_window():
     assert coverage().assess('daily_bars', query, closed_bars(), START, END).reusable
 
 
-def test_a_missing_session_never_proves_a_closed_window():
-    # 2026-09-28 is a source session, so a bar set that skips it proves nothing.
+def test_a_session_without_a_bar_is_reusable_like_the_source_fills_it():
+    # 2026-09-28 is a source session with no bar. The source fills that session, and
+    # filling reproduces the row, so the window the source reported stays reusable.
     query = DailyBarsQuery(('600000.SH',), START, date(2026, 9, 28), fill_data=False)
-    assert not coverage().assess('daily_bars', query, closed_bars(), START, date(2026, 9, 28)).reusable
+    assert coverage().assess('daily_bars', query, closed_bars(), START, date(2026, 9, 28)).reusable
+
+
+def test_a_bar_outside_the_source_calendar_never_proves_anything():
+    # 2026-09-26 is a Saturday: no session, so no bar may claim it.
+    query = DailyBarsQuery(('600000.SH',), START, END, fill_data=False)
+    rows = closed_bars() + (bar(date(2026, 9, 26)),)
+    assert not coverage().assess('daily_bars', query, rows, START, END).reusable
+
+
+def test_an_empty_bar_set_never_proves_a_closed_window():
+    query = DailyBarsQuery(('600000.SH',), START, END, fill_data=False)
+    assert not coverage().assess('daily_bars', query, (), START, END).reusable
 
 
 @pytest.mark.parametrize('adjustment,fill_data', [('back', False), ('none', True)])

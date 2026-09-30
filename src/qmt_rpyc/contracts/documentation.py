@@ -47,14 +47,13 @@ FIELD_DESCRIPTIONS = {
     'name': '源端合约名称，原样保留。',
     'market': '交易市场：SH（上海）或 SZ（深圳）。',
     'markets': '沪深市场数组，非空且不可重复。',
-    'sector': '完整板块名称，可从 reference.list_sectors 获取。',
     'index': '指数代码，例如 000300.SH。',
     'start': '起始日期，含端点；null 表示不限制；使用 YYYY-MM-DD。',
     'end': '结束日期，含端点；null 表示不限制；不能早于 start；使用 YYYY-MM-DD。',
     'count': '最多返回的记录数量，正整数；与 start 互斥；null 表示范围内全部。',
     'period': 'K 线周期：仅支持 1d（日 K）。',
     'adjustment': '复权方式：none 不复权，front/back 前/后复权，front_ratio/back_ratio 等比前/后复权。',
-    'fill_data': '将是否填充缺失行情的选项传给源端；不保证覆盖范围或新鲜度。',
+    'fill_data': '是否要求窗口内每个交易日都有一行；服务端按来源自身规则本地补齐，窗口首个交易日无 K 线时改由源端补齐。',
     'rows': '按时间严格递增、不重复的 K 线记录；未下载缓存时可能为空。',
     'items': '逐合约成功或失败结果；每个请求代码对应一项，保留请求顺序。',
     'value': '该合约成功返回的类型化数据。',
@@ -205,6 +204,9 @@ for _name, _description in {
     FIELD_DESCRIPTIONS[_name] = _description + '记录；未请求时为 null，请求后无记录为空数组；字段保留源端单位。'
 
 FIELD_OVERRIDES = {
+    ('DailyBarsQuery', 'start'): '起始日期，含端点；不设置时取结束日期前一年，早于来源上市日期时以该日期为准；使用 YYYY-MM-DD。',
+    ('DailyBarsQuery', 'end'): '结束日期，含端点；不设置时取服务端上海市场日期；使用 YYYY-MM-DD。',
+    ('DailyBarsQuery', 'count'): '最多返回的记录数量，正整数；与 start 互斥；不设置时返回解析后窗口内的全部记录。',
     ('OptionChainRequest', 'expiry_date'): '到期日，不能早于服务端上海市场日期（含今天）；仅发现当前合约，不支持历史目录。',
     ('OptionContract', 'expiry_date'): '期权合约实际到期日，YYYY-MM-DD。',
     ('MarketTicks', 'items'): '按合约代码去重、升序的市场报价或逐项失败结果。',

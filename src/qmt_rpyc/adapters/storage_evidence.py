@@ -1,8 +1,11 @@
 """Conservative reusable-range evidence for QMT provider results.
 
-The source calendar is authoritative only for an explicitly bounded past query.
-A bar range additionally requires one *actual* bar for every calendar session.
-Financial/event completeness has no deployed attestation and remains observed.
+The source calendar is authoritative only for an explicitly bounded past query. Bars
+are reusable when every reported bar falls on a source session: a session without one
+is a day the source holds no trading data for, which filling reproduces. Which of
+those days are suspensions cannot be attested, so a bar the source has not downloaded
+yet reads the same until an explicit refresh. Financial/event completeness has no
+deployed attestation and remains observed.
 """
 import logging
 from qmt_rpyc.contracts.market import TradingDatesRequest
@@ -47,8 +50,9 @@ class QmtCoverage(ConservativeEvidence):
                 logger.warning('Cannot obtain calendar evidence for bars', exc_info=True)
                 return Evidence(False, 'calendar evidence unavailable')
             dates = tuple(row.trade_date for row in rows)
-            valid = bool(sessions) and tuple(sessions) == tuple(sorted(set(sessions))) and dates == tuple(sessions)
-            return Evidence(valid, 'actual bar for every source calendar session' if valid else 'unknown missing sessions')
+            valid = (bool(rows) and bool(sessions) and tuple(sessions) == tuple(sorted(set(sessions)))
+                     and dates == tuple(sorted(set(dates))) and set(dates) <= set(sessions))
+            return Evidence(valid, 'bars within the source calendar' if valid else 'bars outside it, or nothing')
         return super().assess(dataset, request, rows, start, end, calendar)
 
 

@@ -7,8 +7,9 @@ from functools import partial
 import logging
 
 from qmt_rpyc.adapters.errors import ProviderError
-from qmt_rpyc.contracts.common import BatchResult, Failure, ItemError, Success
+from qmt_rpyc.contracts.common import BatchResult, CachedCodesRequest, Failure, ItemError, Success
 from qmt_rpyc.contracts.financials import FINANCIAL_TABLES, FinancialReports
+from qmt_rpyc.contracts.instruments import KnownDate
 from qmt_rpyc.contracts.market import DailyBarSeries, TradingDatesRequest
 from qmt_rpyc.contracts.options import ExpiryDates
 from qmt_rpyc.contracts.reference import DividendQuery
@@ -25,6 +26,8 @@ from .repository import Partition, Write
 logger = logging.getLogger(__name__)
 FULL_START, FULL_END = date.min, date.max
 DAY = timedelta(days=1)
+# An unset daily-bar beginning is a window of this length, anchored at the request end.
+DAYS_PER_YEAR = 365
 
 
 @dataclass(frozen=True)
@@ -34,9 +37,6 @@ class History:
     rows: tuple
     writes: tuple
     complete: bool
-    # True once the closed part was read from the source, so a later source
-    # fallback on refresh does not fetch the raw bars again to seed the cache.
-    fetched: bool = False
 
 
 class PersistentData:
@@ -295,7 +295,30 @@ class PersistentData:
     def daily_bars(self, request):
         """Answer one security at a time against its own proven cache boundary."""
         today = self.clock().astimezone(SHANGHAI).date()
-        return self.batch(request, lambda code: self._daily(replace(request, codes=(code,)), today))
+        # A counted request has no beginning to resolve, so it needs no listing date.
+        listed = self.listing_dates(request.codes) if request.count is None else {}
+        return self.batch(request, lambda code: self._daily(self.normalized(request, code, today, listed), today))
+
+    def listing_dates(self, codes):
+        """Listing dates the source reports, for the beginning clamp. Absent means the
+        requested beginning is kept rather than guessed."""
+        return {item.code: item.value.listed_date.value
+                for item in self.details(CachedCodesRequest(tuple(codes))).items
+                if isinstance(item, Success) and isinstance(item.value.listed_date, KnownDate)}
+
+    def normalized(self, request, code, today, listed):
+        """Resolve a daily-bar beginning into a window the bridge can verify.
+
+        An unset beginning becomes one year before the request end, because an open
+        beginning is never reusable. A beginning earlier than the reported listing date
+        starts at the listing instead, where the source has no fabricated rows.
+        """
+        if request.count is not None:
+            return request
+        end = request.end or today
+        start = request.start or end - timedelta(days=DAYS_PER_YEAR)
+        first = listed.get(code)
+        return replace(request, start=first if first is not None and start < first <= end else start, end=end)
 
     def raw_write(self, request, rows, started):
         today = self.clock().astimezone(SHANGHAI).date()
@@ -312,28 +335,37 @@ class PersistentData:
                                      partial(self.calendar, request, start, end))
         return Write(Partition('daily_bars', request.codes[0]), rows, start, end, proof.reusable, started)
 
+    def derivable(self, request, events, start, end):
+        """Whether the bridge can reproduce this request's own result locally.
+
+        Adjustment is answerable before any bar is read; filling is settled from the
+        assembled rows, so a window the source would fill differently falls back.
+        """
+        return self.adjustment.supports(self.relevant_events(request, events, start, end), request.adjustment)
+
+    def relevant_events(self, request, events, start, end):
+        """The events a derivation may apply, filtered the way the derivation filters them."""
+        if request.adjustment.startswith('front'):
+            return tuple(event for event in events if event.event_date > start)
+        return tuple(event for event in events if event.event_date <= end)
+
     def _daily(self, request, today):
         """Verified history up to what the cache proves, then the unproven remainder."""
         code = request.codes[0]
         start, end = self.bounds(request)
         events, event_writes, event_proven = self._adjustment_events(request, code)
         if end > today or (request.count is None and request.start is None):
-            # An unprovable future bound or an open range: the exact original
-            # request, which may answer an open interval.
-            return self._source_daily(request, event_writes)
+            return self._source_daily(request, events, event_proven, event_writes)
         partition = Partition('daily_bars', code)
         cached = None if request.refresh else self.read(partition, start, end, 'daily_bars')
         history_end, tail_start = self.live_split(
             start, end, today, self.proven_end(cached.coverage) if cached else None)
         if history_end is None:
-            # Nothing proven inside this window, or a refreshed request that would
-            # have to splice: the exact original request, which also seeds the cache.
-            return self._source_daily(request, event_writes)
-        if tail_start is not None and (request.adjustment != 'none' or request.fill_data):
-            # Only raw bars are safe to splice across the still-open day: the
-            # source's own factors anchor today's adjusted or filled bar, so the
-            # whole request stays on the source path.
-            return self._source_daily(request, event_writes)
+            return self._source_daily(request, events, event_proven, event_writes)
+        if tail_start is not None and not self.derivable(request, events, start, end):
+            # An adjustment this bridge cannot reproduce locally, so the still-open day
+            # and the whole window keep the source's own factors in one call.
+            return self._source_daily(request, events, event_proven, event_writes)
         tail, tail_writes = (), ()
         if tail_start is not None:
             tail, tail_writes = self._tail_bars(request, partition, tail_start, end, today)
@@ -347,8 +379,8 @@ class PersistentData:
         if isinstance(history, Failure):
             return history
         return self._answer(request, code, history.start, end, history.rows + tail,
-                            history.complete and event_proven, events,
-                            event_writes + tail_writes + history.writes, history.fetched)
+                            history.complete, event_proven, events,
+                            event_writes + tail_writes + history.writes)
 
     def _adjustment_events(self, request, code):
         """Event dependency rows, the write that carries them, and their verdict."""
@@ -393,9 +425,9 @@ class PersistentData:
                                          partial(self.calendar, query, lo, hi))
             staged.append(Write(partition, raw,lo,hi,proof.reusable,started))
             if not proof.reusable:
-                return History(start, rows, tuple(staged), False, True)
+                return History(start, rows, tuple(staged), False)
             merged.update((row.trade_date,row) for row in raw)
-        return History(start, tuple(merged[day] for day in sorted(merged)), tuple(staged), True, True)
+        return History(start, tuple(merged[day] for day in sorted(merged)), tuple(staged), True)
 
     def _tail_bars(self, request, partition, start, end, today):
         """The unproven remainder, read once; only its closed part is persisted."""
@@ -417,45 +449,73 @@ class PersistentData:
             return rows, ()
         return rows, (Write(partition, closed, start, closed_end, proof.reusable, started),)
 
-    def _answer(self, request, code, start, end, rows, complete, events, writes, fetched):
+    def _answer(self, request, code, start, end, rows, history_complete, event_proven, events, writes):
         """Derive locally once every dependency is verified; otherwise ask the source."""
-        relevant = tuple(event for event in events if
-            (event.event_date > start if request.adjustment.startswith('front') else event.event_date <= end))
-        if complete and self.adjustment.supports(relevant, request.adjustment):
+        relevant = self.relevant_events(request, events, start, end)
+        if history_complete and event_proven and self.adjustment.supports(relevant, request.adjustment):
             try:
                 return self._derive(request, code, start, end, rows, events, writes)
             except UnsupportedDerivation:
                 pass
         # Unknown filling/event cases use the exact original query; no partial concatenation.
-        return self._source_daily(request, writes, fetched)
+        return self._source_daily(request, events, event_proven, writes)
 
     def _derive(self, request, code, start, end, rows, events, writes):
         if request.fill_data:
             market = self.evidence.market_for(code)
             if market is None:
                 raise UnsupportedDerivation('market mapping not verified')
+        # The source fills after adjusting, so a halt crossing an ex-dividend date
+        # keeps the adjusted series continuous; the same order is used here.
+        adjusted = self.adjustment.derive(rows, events, request.adjustment)
+        if request.fill_data:
             sessions = self.trading_dates(TradingDatesRequest(market, start, end))
-            rows = self.fill.derive(rows, sessions, True)
+            adjusted = self.fill.derive(adjusted, sessions, True)
+        if request.count is not None:
+            # A counted request counts filled rows too, so the trim follows the filling.
+            adjusted = adjusted[-request.count:]
         result = codec.decode(DailyBarSeries, codec.encode(
-            DailyBarSeries(self.adjustment.derive(rows,events,request.adjustment),request.adjustment)))
+            DailyBarSeries(adjusted, request.adjustment)))
         self.repository.write(writes)
         return result
 
-    def _source_daily(self, request, writes=(), fetched=False):
-        """The exact original request; the only path that may answer an open interval."""
+    def _source_daily(self, request, events=(), event_proven=True, writes=()):
+        """Answer from the source.
+
+        The unadjusted series is the only shape this bridge stores, so a request it can
+        reproduce locally reads that series and derives the answer from stored data;
+        anything else keeps the exact original request. The source path is also the
+        only one that may answer an open interval.
+        """
         started = self.clock()
+        today = self.clock().astimezone(SHANGHAI).date()
         raw_request = replace(request, adjustment='none', fill_data=False)
-        if request.refresh and not fetched and (request.adjustment != 'none' or request.fill_data):
-            item = self.call('market.get_daily_bars', self.source.market.get_daily_bars, raw_request).items[0]
-            if isinstance(item, Failure):
-                return item
-            write = self.raw_write(raw_request, item.value.rows, started)
-            writes = writes + ((write,) if write else ())
+        start, end = self.bounds(raw_request)
+        # A future bound is never provable, so it keeps the source's own answer.
+        derivable = end <= today and event_proven and self.adjustment.supports(
+            self.relevant_events(request, events, start, end), request.adjustment)
+        if not (derivable or request.refresh):
+            return self._source_answer(request, writes)
+        raw = self.call('market.get_daily_bars', self.source.market.get_daily_bars, raw_request).items[0]
+        if isinstance(raw, Failure):
+            return raw
+        write = self.raw_write(raw_request, raw.value.rows, started)
+        staged = writes + ((write,) if write else ())
+        if derivable:
+            if request.count is not None and raw.value.rows:
+                # A counted read has no beginning of its own: its span is the rows it
+                # returned, which is what the filling and the trim then work over.
+                start = raw.value.rows[0].trade_date
+            try:
+                return self._derive(request, request.codes[0], start, end, raw.value.rows, events, staged)
+            except UnsupportedDerivation:
+                pass
+        return self._source_answer(request, staged)
+
+    def _source_answer(self, request, writes):
+        """Whatever the source returns for the request as asked, with staged writes."""
         item = self.call('market.get_daily_bars', self.source.market.get_daily_bars, request).items[0]
         if isinstance(item, Failure):
             return item
-        if request.adjustment == 'none' and not request.fill_data:
-            write = self.raw_write(raw_request, item.value.rows, started)
-            writes = writes + ((write,) if write else ())
         self.repository.write(writes)
         return item.value
