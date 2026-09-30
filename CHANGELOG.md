@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.2] - 2026-09-30
 
 - Reuse verified history when a daily-bar or trading-calendar request runs through today: split the request internally at the last day the persistent cache proves, serve that verified part from the cache and read the unproven remainder from the source as the still-open tail. The tail's closed part is persisted once its own evidence lands, so the cache boundary keeps advancing across days; today is never persisted or marked reusable. A failed tail fails the whole item instead of returning history alone, and refresh, unbounded, future-ended, or adjusted/filled requests keep the exact original source call. Evidence now reuses the stored calendar through the bridge instead of re-reading it per security, so a batch resolves the calendar once. Callers receive the same single result; no request parameters or compatibility identifiers change.
 

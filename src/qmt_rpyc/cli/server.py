@@ -771,7 +771,7 @@ For console debugging: qmt-rpyc-server start --foreground""",
     update = sub.add_parser(
         "update", help="upgrade this local environment without starting the server",
         description="Drain and stop the local server, install and verify the target package, then print next steps.",
-        epilog="Examples:\n  qmt-rpyc-server update\n  qmt-rpyc-server update --pre\n  qmt-rpyc-server update --version 0.8.1",
+        epilog="Examples:\n  qmt-rpyc-server update\n  qmt-rpyc-server update --pre\n  qmt-rpyc-server update --version 0.8.2",
     )
     from qmt_rpyc.cli.update import add_arguments
     add_arguments(update)

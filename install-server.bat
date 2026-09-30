@@ -6,7 +6,7 @@ set "QMT_RPYC_ROOT=%LOCALAPPDATA%\qmt-rpyc"
 set "QMT_RPYC_VENV=%QMT_RPYC_ROOT%\venv"
 set "PYTHON_CMD="
 REM Keep the online installer pin aligned with the release version.
-set "QMT_RPYC_VERSION=0.8.1"
+set "QMT_RPYC_VERSION=0.8.2"
 set "QMT_RPYC_INDEX=https://pypi.org/simple"
 if not "%QMT_RPYC_VERSION:rc=%"=="%QMT_RPYC_VERSION%" set "QMT_RPYC_INDEX=https://test.pypi.org/simple"
 set "QMT_RPYC_DOWNLOAD=%TEMP%\qmt-rpyc-bootstrap-%RANDOM%-%RANDOM%"
