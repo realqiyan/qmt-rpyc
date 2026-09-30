@@ -52,9 +52,9 @@ def test_stable_update_installs_then_verifies_without_start(environment, monkeyp
     assert '--no-index' in calls[2]
 
 
-@pytest.mark.parametrize('version,pre', [(None, True), ('0.9.0rc1', False)])
+@pytest.mark.parametrize('version,pre', [(None, True), ('0.9.0rc2', False)])
 def test_prerelease_source_does_not_supply_dependencies(environment, monkeypatch, version, pre):
-    calls = fake_packages(monkeypatch, '0.9.0rc1')
+    calls = fake_packages(monkeypatch, '0.9.0rc2')
     update.perform(args(version, pre))
     assert update.TESTPYPI in calls[0]
     assert update.PYPI in calls[1]

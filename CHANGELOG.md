@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0rc2] - 2026-09-30
+
+- Restore the BigQMT option-discovery reader methods (`get_option_codes` and
+  `get_option_underlying_map`) that 0.9.0rc1 removed alongside the sector
+  surface. The strategy bridge still serves `option_codes` and `option_map`,
+  but the service-side reader lost the methods, so option expiry dates and
+  option underlyings failed with a backend error on BigQMT deployments.
+
 ## [0.9.0rc1] - 2026-09-30
 
 - Read daily bars as the source's own unadjusted series and derive everything else locally: every adjustment mode (none, front, back, front_ratio, back_ratio) and suspension filling are reproduced by the bridge, so a request the bridge can reproduce asks the source for unadjusted bars only, whatever adjustment or filling it was asked for. The stored bars are therefore always real observations, and the filled series a caller receives is rebuilt at derivation time.
