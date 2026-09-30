@@ -34,6 +34,12 @@ class StrategyReader:
     def get_option_detail(self, code):
         return self.transport.request('option_detail', {'code': code})
 
+    def get_option_codes(self, underlying):
+        return self.transport.request('option_codes', {'underlying': underlying})
+
+    def get_option_underlying_map(self):
+        return self.transport.request('option_map', {})
+
     def _read_groups(self, operation, key, identities, **arguments):
         # Amortize the measured pipe round-trip without unbounded native loops.
         identities = list(identities)
