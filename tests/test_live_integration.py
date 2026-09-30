@@ -3,7 +3,8 @@ import os
 import pytest
 from qmt_rpyc import QmtClient
 
-pytestmark = pytest.mark.skipif(os.environ.get('QMT_RPYC_LIVE') != '1', reason='set QMT_RPYC_LIVE=1 for deployment validation')
+pytestmark = [pytest.mark.live,
+              pytest.mark.skipif(os.environ.get('QMT_RPYC_LIVE') != '1', reason='set QMT_RPYC_LIVE=1 for deployment validation')]
 
 
 @pytest.fixture(scope='module')

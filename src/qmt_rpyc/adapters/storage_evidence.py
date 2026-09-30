@@ -21,7 +21,13 @@ class QmtCoverage(ConservativeEvidence):
         market = code.rsplit('.',1)[-1]
         return market if market in ('SH','SZ') else None
 
-    def assess(self, dataset, request, rows, start, end):
+    def sessions(self, market, start, end, calendar):
+        """Sessions of a closed window, from the bridge when it offers its stored one."""
+        if calendar is not None:
+            return tuple(calendar())
+        return tuple(self.market.get_trading_dates(TradingDatesRequest(market,start,end)))
+
+    def assess(self, dataset, request, rows, start, end, calendar=None):
         today = self.clock().astimezone(SHANGHAI).date()
         bounded = request.start is not None and request.end is not None and getattr(request,'count',None) is None
         if not bounded or end >= today:
@@ -36,18 +42,18 @@ class QmtCoverage(ConservativeEvidence):
             if market is None:
                 return Evidence(False, 'unverified market identity')
             try:
-                sessions = self.market.get_trading_dates(TradingDatesRequest(market,start,end))
+                sessions = self.sessions(market,start,end,calendar)
             except Exception:
                 logger.warning('Cannot obtain calendar evidence for bars', exc_info=True)
                 return Evidence(False, 'calendar evidence unavailable')
             dates = tuple(row.trade_date for row in rows)
             valid = bool(sessions) and tuple(sessions) == tuple(sorted(set(sessions))) and dates == tuple(sessions)
             return Evidence(valid, 'actual bar for every source calendar session' if valid else 'unknown missing sessions')
-        return super().assess(dataset, request, rows, start, end)
+        return super().assess(dataset, request, rows, start, end, calendar)
 
 
 class BigQmtCoverage(QmtCoverage):
-    def assess(self, dataset, request, rows, start, end):
+    def assess(self, dataset, request, rows, start, end, calendar=None):
         if dataset == 'dividend_events':
             # ReferenceAdapter reads the complete explicit event-pair collection
             # before applying request dates locally, validating even excluded rows.
@@ -55,4 +61,4 @@ class BigQmtCoverage(QmtCoverage):
             valid = (len({row.source_event_at for row in rows}) == len(rows)
                      and all(start <= row.event_date <= end for row in rows))
             return Evidence(valid, 'validated full source event collection, filtered locally')
-        return super().assess(dataset, request, rows, start, end)
+        return super().assess(dataset, request, rows, start, end, calendar)

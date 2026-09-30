@@ -35,7 +35,7 @@ Common test commands:
 
 ```bash
 python -m pytest tests/ -v
-python -m pytest tests/ -v -k "not live"
+python -m pytest tests/ -v -m "not live"
 python -m pytest tests/test_service.py -v
 python -m pytest tests/test_service.py::test_all_read_capabilities_have_typed_results -v
 python -m pytest tests/test_live_integration.py -v

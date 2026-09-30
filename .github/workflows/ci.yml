@@ -38,7 +38,7 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - run: python -m pip install -e ".[server]" pytest
-      - run: python -m pytest tests/ -v -k "not live"
+      - run: python -m pytest tests/ -v -m "not live"
 
   macos:
     name: macOS client smoke

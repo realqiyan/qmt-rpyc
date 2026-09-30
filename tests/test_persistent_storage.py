@@ -11,6 +11,7 @@ import pytest
 
 from qmt_rpyc.adapters.interfaces import Providers
 from qmt_rpyc.adapters.errors import ProviderError
+from qmt_rpyc.adapters.storage_evidence import QmtCoverage
 from qmt_rpyc.contracts.common import BatchResult, CachedCodesRequest, RefreshRequest, Success, Failure, ItemError
 from qmt_rpyc.contracts.financials import FinancialQuery, FinancialReports, BalanceRecord
 from qmt_rpyc.contracts.instruments import Instrument, KnownDate, DatePlaceholder
@@ -43,7 +44,7 @@ class Proven(ConservativeEvidence):
     def market_for(self, code):
         return 'SH'
 
-    def assess(self, dataset, request, rows, start, end):
+    def assess(self, dataset, request, rows, start, end, calendar=None):
         return Evidence(True,'synthetic finite universe')
 
 
@@ -273,6 +274,288 @@ def test_today_bars_are_never_persisted(setup):
     assert len(data.daily_bars(request).require_all()['600000.SH'].rows)==6
     rows=repo.read(Partition('daily_bars','600000.SH'),START,today,Freshness('forever'),NOW).rows
     assert all(row.trade_date<today for row in rows)
+
+
+class Observed(ConservativeEvidence):
+    """A source that attests nothing: rows are recorded, never claimed reusable."""
+    def market_for(self, code):
+        return 'SH'
+
+
+def test_closed_windows_never_resolve_the_unfinished_boundary(setup):
+    source,_,data,_=setup
+    source.calls.clear()
+    data.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    assert [name for name,_ in source.calls]==['bars']
+
+
+def test_open_window_splits_closed_history_from_the_unfinished_tail(setup):
+    source,repo,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    data.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    source.rows+=(bar(today,close=11.),)
+    source.calls.clear()
+    result=data.daily_bars(DailyBarsQuery(('600000.SH',),START,today,fill_data=False)).require_all()
+    assert tuple(row.trade_date for row in result['600000.SH'].rows)==(
+        tuple(START+timedelta(days=i) for i in range(5))+(today,))
+    assert [(r.start,r.end) for name,r in source.calls if name=='bars']==[(END+timedelta(days=1),today)]
+    snapshot=repo.read(Partition('daily_bars','600000.SH'),START,today,Freshness('forever'),NOW)
+    assert snapshot.coverage==((START,END),)
+    assert max(row.trade_date for row in snapshot.rows)==END
+
+
+def test_count_query_splices_the_confirmed_suffix_with_the_unfinished_tail(setup):
+    source,_,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    data.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    source.rows+=(bar(today,close=11.),)
+    source.calls.clear()
+    request=DailyBarsQuery(('600000.SH',),end=today,count=2,fill_data=False)
+    result=data.daily_bars(request).require_all()
+    assert tuple(row.trade_date for row in result['600000.SH'].rows)==(END,today)
+    assert [(r.start,r.end) for name,r in source.calls if name=='bars']==[(END+timedelta(days=1),today)]
+
+
+def test_count_through_today_never_returns_more_than_requested(setup):
+    source,_,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    data.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    # Two closed days beyond the proven boundary: the whole remainder is read,
+    # but a counted request must still answer at most count rows.
+    source.rows+=(bar(END+timedelta(days=1)),bar(END+timedelta(days=2)))
+    source.calls.clear()
+    request=DailyBarsQuery(('600000.SH',),end=today,count=1,fill_data=False)
+    result=data.daily_bars(request).require_all()
+    assert tuple(row.trade_date for row in result['600000.SH'].rows)==(END+timedelta(days=2),)
+
+
+@pytest.mark.parametrize('adjustment,fill_data', [
+    ('front', False), ('back', False), ('front_ratio', False), ('back_ratio', False),
+    ('none', True),
+])
+def test_adjusted_or_filled_through_today_keeps_the_exact_original_request(setup, adjustment, fill_data):
+    source,_,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    data.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    source.rows+=(bar(today),)
+    source.calls.clear()
+    request=DailyBarsQuery(('600000.SH',),START,today,adjustment=adjustment,fill_data=fill_data)
+    result=data.daily_bars(request).require_all()
+    assert len(result['600000.SH'].rows)==6
+    assert [r for name,r in source.calls if name=='bars']==[request]
+
+
+def test_the_boundary_follows_the_stored_coverage_across_days(setup):
+    source,repo,data,now=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    source.rows+=(bar(today,close=11.),)
+    request=DailyBarsQuery(('600000.SH',),START,today,fill_data=False)
+    assert len(data.daily_bars(request).require_all()['600000.SH'].rows)==6
+    # A cold cache is seeded by the exact original request, up to the last closed day.
+    assert [r for name,r in source.calls if name=='bars']==[request]
+    assert repo.read(Partition('daily_bars','600000.SH'),START,today,Freshness('forever'),NOW).coverage==(
+        (START,today-timedelta(days=1)),)
+    tomorrow=today+timedelta(days=1)
+    now[0]+=timedelta(days=1)
+    source.rows+=(bar(tomorrow,close=12.),)
+    source.calls.clear()
+    result=data.daily_bars(replace(request,end=tomorrow)).require_all()
+    assert tuple(row.trade_date for row in result['600000.SH'].rows)==(
+        tuple(START+timedelta(days=i) for i in range(5))+(today,tomorrow))
+    # Only what the cache does not prove is read again, and only its closed part is stored.
+    assert [r for name,r in source.calls if name=='bars']==[
+        replace(request,start=today,end=tomorrow,count=None,adjustment='none',fill_data=False)]
+    snapshot=repo.read(Partition('daily_bars','600000.SH'),date.min,date.max,Freshness('forever'),now[0])
+    assert snapshot.coverage==((START,today-timedelta(days=1)),(today,today))
+    assert max(row.trade_date for row in snapshot.rows)==today
+
+
+def test_the_unproven_remainder_proves_and_stores_only_its_closed_part(setup):
+    source,repo,data,now=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    closed=date(2026,9,28)
+    source.rows+=(bar(closed),bar(today,close=11.))
+    real=PersistentData(source.providers(),repo,data.policies,clock=lambda:now[0],
+                        evidence=QmtCoverage(source,clock=lambda:now[0]),adjustment=SampledBigQmtAdjustment())
+    real.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    source.calls.clear()
+    result=real.daily_bars(DailyBarsQuery(('600000.SH',),START,today,fill_data=False)).require_all()
+    assert tuple(row.trade_date for row in result['600000.SH'].rows)==(
+        tuple(START+timedelta(days=i) for i in range(5))+(closed,today))
+    # One bars read for the remainder, one calendar read proving its closed part.
+    assert [(name,r.start,r.end) for name,r in source.calls]==[
+        ('bars',END+timedelta(days=1),today),('calendar',END+timedelta(days=1),closed)]
+    snapshot=repo.read(Partition('daily_bars','600000.SH'),START,today,Freshness('forever'),NOW)
+    assert snapshot.coverage==((START,END),(END+timedelta(days=1),closed))
+    assert max(row.trade_date for row in snapshot.rows)==closed
+    source.calls.clear()
+    real.daily_bars(DailyBarsQuery(('600000.SH',),START,today,fill_data=False)).require_all()
+    # The stored calendar now proves the boundary, so only the live day is read.
+    assert [name for name,_ in source.calls]==['bars']
+
+
+def test_an_unusable_calendar_keeps_the_answer_without_new_coverage(setup):
+    source,repo,data,now=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    closed=date(2026,9,28)
+    source.rows+=(bar(closed),bar(today,close=11.))
+    real=PersistentData(source.providers(),repo,data.policies,clock=lambda:now[0],
+                        evidence=QmtCoverage(source,clock=lambda:now[0]),adjustment=SampledBigQmtAdjustment())
+    real.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    def broken(request):
+        raise RuntimeError('calendar exploded')
+    source.get_trading_dates=broken
+    source.calls.clear()
+    result=real.daily_bars(DailyBarsQuery(('600000.SH',),START,today,fill_data=False)).require_all()
+    assert tuple(row.trade_date for row in result['600000.SH'].rows)==(
+        tuple(START+timedelta(days=i) for i in range(5))+(closed,today))
+    assert [name for name,_ in source.calls]==['bars']
+    snapshot=repo.read(Partition('daily_bars','600000.SH'),START,today,Freshness('forever'),NOW)
+    assert snapshot.coverage==((START,END),)
+    assert max(row.trade_date for row in snapshot.rows)==END
+
+
+def test_unfinished_tail_failure_fails_the_item_without_history_or_writes(setup):
+    source,repo,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    data.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    source.rows+=(bar(today,close=11.),)
+    source.calls.clear()
+    original=source.get_daily_bars
+    def refuse_tail(request):
+        if request.start is not None and request.start>END:
+            source.calls.append(('bars',request))
+            raise ProviderError('NOT_CONNECTED','market.get_daily_bars','offline')
+        return original(request)
+    source.get_daily_bars=refuse_tail
+    request=DailyBarsQuery(('600000.SH',),START,today,fill_data=False)
+    result=data.daily_bars(request)
+    assert result.items[0].error.error_type=='SOURCE_ERROR'
+    assert [r for name,r in source.calls if name=='bars']==[
+        replace(request,start=END+timedelta(days=1),count=None,adjustment='none',fill_data=False)]
+    snapshot=repo.read(Partition('daily_bars','600000.SH'),START,today,Freshness('forever'),NOW)
+    assert snapshot.coverage==((START,END),)
+    assert max(row.trade_date for row in snapshot.rows)==END
+
+
+def test_unprovable_closed_window_keeps_the_exact_original_request(setup):
+    source,repo,data,now=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    source.rows+=(bar(today,close=11.),)
+    strict=PersistentData(source.providers(),repo,data.policies,clock=lambda:now[0],
+                          evidence=Observed(),adjustment=SampledBigQmtAdjustment())
+    request=DailyBarsQuery(('600000.SH',),START,today,fill_data=False)
+    result=strict.daily_bars(request).require_all()
+    assert tuple(row.trade_date for row in result['600000.SH'].rows)==(
+        tuple(START+timedelta(days=i) for i in range(5))+(today,))
+    assert source.calls[-1]==('bars',request)
+    assert repo.read(Partition('daily_bars','600000.SH'),START,today,Freshness('forever'),NOW).coverage==()
+
+
+def test_refresh_at_the_unfinished_boundary_keeps_the_exact_original_request(setup):
+    source,_,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    data.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    source.rows+=(bar(today,close=11.),)
+    source.calls.clear()
+    request=DailyBarsQuery(('600000.SH',),START,today,fill_data=False,refresh=True)
+    result=data.daily_bars(request).require_all()
+    assert len(result['600000.SH'].rows)==6
+    assert [r for name,r in source.calls if name=='bars']==[request]
+
+
+def test_refresh_at_the_unfinished_boundary_resolves_no_calendar(setup):
+    source,_,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    data.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    source.rows+=(bar(today,close=11.),)
+    source.calls.clear()
+    request=DailyBarsQuery(('600000.SH',),START,today,fill_data=False,refresh=True)
+    data.daily_bars(request).require_all()
+    assert [name for name,_ in source.calls]==['bars']
+
+
+def test_open_range_through_today_keeps_the_exact_original_request(setup):
+    source,_,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    source.rows+=(bar(today,close=11.),)
+    source.calls.clear()
+    request=DailyBarsQuery(('600000.SH',),end=today,fill_data=False)
+    result=data.daily_bars(request).require_all()
+    assert len(result['600000.SH'].rows)==6
+    assert [name for name,_ in source.calls]==['bars']
+    assert [r for name,r in source.calls if name=='bars']==[request]
+
+
+@pytest.mark.parametrize('window',[lambda today:(START,today+timedelta(days=1)),lambda today:(today,today)])
+def test_windows_without_a_closed_part_keep_the_exact_original_request(setup,window):
+    source,_,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    data.daily_bars(DailyBarsQuery(('600000.SH',),START,END,fill_data=False)).require_all()
+    source.rows+=(bar(today,close=11.),)
+    source.calls.clear()
+    request=DailyBarsQuery(('600000.SH',),*window(today),fill_data=False)
+    data.daily_bars(request).require_all()
+    assert [r for name,r in source.calls if name=='bars']==[request]
+
+
+def test_calendar_splits_closed_days_from_the_unfinished_tail(setup):
+    source,repo,data,_=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    source.rows+=(bar(today),)
+    data.trading_dates(TradingDatesRequest('SH',START,END))
+    source.calls.clear()
+    days=data.trading_dates(TradingDatesRequest('SH',START,today))
+    assert days==tuple(START+timedelta(days=i) for i in range(5))+(today,)
+    assert [(r.start,r.end) for name,r in source.calls if name=='calendar']==[(END+timedelta(days=1),today)]
+    stored=repo.read(Partition('trading_dates','SH'),START,today,Freshness('forever'),NOW)
+    assert max(stored.rows)==END
+
+
+def test_a_cold_calendar_request_is_answered_by_the_original_source_query(setup):
+    source,repo,data,now=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    source.rows+=(bar(today),)
+    real=PersistentData(source.providers(),repo,data.policies,clock=lambda:now[0],
+                        evidence=QmtCoverage(source,clock=lambda:now[0]),adjustment=SampledBigQmtAdjustment())
+    days=real.trading_dates(TradingDatesRequest('SH',START,today))
+    assert days==tuple(START+timedelta(days=i) for i in range(5))+(today,)
+    assert [(r.start,r.end) for name,r in source.calls if name=='calendar']==[(START,today)]
+    # The unfinished day is answered but never claimed as stored coverage.
+    stored=repo.read(Partition('trading_dates','SH'),START,today,Freshness('forever'),NOW)
+    assert stored.coverage==() and max(stored.rows)==today
+
+
+def test_an_unusable_calendar_does_not_fail_a_today_ended_batch(setup):
+    source,repo,data,now=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    source.rows+=(bar(today,close=11.),)
+    def broken(request):
+        raise RuntimeError('calendar exploded')
+    source.get_trading_dates=broken
+    request=DailyBarsQuery(('600000.SH',),START,today,fill_data=False)
+    result=data.daily_bars(request).require_all()
+    assert tuple(row.trade_date for row in result['600000.SH'].rows)==(
+        tuple(START+timedelta(days=i) for i in range(5))+(today,))
+    # A cold cache seeds itself from the exact original request, calendar or not.
+    assert [r for name,r in source.calls if name=='bars']==[request]
+    assert max(row.trade_date for row in
+               repo.read(Partition('daily_bars','600000.SH'),START,today,Freshness('forever'),NOW).rows)==END
+
+
+def test_an_unprovable_gap_over_stored_coverage_uses_the_original_request(setup):
+    source,repo,data,now=setup
+    today=NOW.astimezone(SHANGHAI).date()
+    source.rows+=(bar(today,close=11.),)
+    p=Partition('daily_bars','600000.SH')
+    repo.write((Write(p,(bar(START),bar(START+timedelta(days=1))),START,START+timedelta(days=1),True,NOW),
+                Write(p,(bar(END),),END,END,True,NOW)))
+    strict=PersistentData(source.providers(),repo,data.policies,clock=lambda:now[0],
+                          evidence=Observed(),adjustment=SampledBigQmtAdjustment())
+    request=DailyBarsQuery(('600000.SH',),START,today,fill_data=False)
+    result=strict.daily_bars(request).require_all()
+    assert len(result['600000.SH'].rows)==6
+    assert source.calls[-1]==('bars',request)
 
 
 def test_concurrent_snapshot_misses_are_coalesced(setup):

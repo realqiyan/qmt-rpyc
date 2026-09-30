@@ -12,7 +12,7 @@ REM     selected by QMT_RPYC_PROFILE (default: default).
 REM
 REM Usage:
 REM   scripts\test_server.bat           Run all tests
-REM   scripts\test_server.bat -k "not live"   Skip live tests
+REM   scripts\test_server.bat -m "not live"   Skip live tests
 REM   scripts\test_server.bat -v -x            Verbose, stop on first failure
 REM ============================================================
 

@@ -1,8 +1,9 @@
 """Read-through application service over typed providers and business repositories."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
+from functools import partial
 import logging
 
 from qmt_rpyc.adapters.errors import ProviderError
@@ -17,12 +18,25 @@ from qmt_rpyc.transport import codec
 
 from .adjustment import AdjustmentPolicy, FillPolicy, UnsupportedDerivation
 from .concurrency import PartitionLocks
-from .coverage import ConservativeEvidence, gaps, covered_suffix
+from .coverage import ConservativeEvidence, gaps, covered, covered_suffix
 from .policy import SHANGHAI, utc_now
 from .repository import Partition, Write
 
 logger = logging.getLogger(__name__)
 FULL_START, FULL_END = date.min, date.max
+DAY = timedelta(days=1)
+
+
+@dataclass(frozen=True)
+class History:
+    """Verified rows for the closed part of a request, and what backs them."""
+    start: date
+    rows: tuple
+    writes: tuple
+    complete: bool
+    # True once the closed part was read from the source, so a later source
+    # fallback on refresh does not fetch the raw bars again to seed the cache.
+    fetched: bool = False
 
 
 class PersistentData:
@@ -143,6 +157,42 @@ class PersistentData:
         today = self.clock().astimezone(SHANGHAI).date()
         return request.start or FULL_START, request.end or (FULL_END if isinstance(request, DividendQuery) else today)
 
+    @staticmethod
+    def proven_end(coverage):
+        """Last day the cache proves, or None when it proves nothing at all."""
+        return max((hi for _, hi in coverage), default=None)
+
+    def live_split(self, start, end, today, proven):
+        """Boundary between what the cache proves and what must be read again.
+
+        Only the current Shanghai day is still open, so everything the cache
+        proves is history and the remainder is read from the source once. A
+        boundary the cache does not reach leaves nothing to splice, and the
+        caller keeps the exact original request instead.
+        """
+        if end != today:
+            return end, None
+        history_end = min(end - DAY, proven) if proven is not None else None
+        if history_end is None or history_end < start:
+            return None, None
+        return history_end, history_end + DAY
+
+    def calendar(self, request, start, end):
+        """Sessions of a closed window from the stored calendar, for evidence."""
+        market = self.evidence.market_for(request.codes[0])
+        if market is None or start > end:
+            return None
+        try:
+            return self.trading_dates(TradingDatesRequest(market, start, end))
+        except (ProviderError, ValueError, TypeError, KeyError, codec.ProtocolError):
+            # Evidence that cannot get the calendar simply proves nothing; the
+            # caller still answers from the source.
+            logger.warning('Cannot reuse the stored calendar as bar evidence', exc_info=True)
+            return None
+        except Exception:
+            logger.exception('Unexpected failure while reading the stored calendar')
+            return None
+
     def range_read(self, partition, request, category, load, row_date, *, state='', state_category=None):
         """Return rows and staged write; callers can atomically publish dependencies."""
         start, end = self.bounds(request)
@@ -161,12 +211,46 @@ class PersistentData:
 
     def trading_dates(self, request):
         with self.locks.hold(('calendar', request.market)):
-            if request.end and request.end > self.clock().astimezone(SHANGHAI).date():
+            today = self.clock().astimezone(SHANGHAI).date()
+            if request.end and request.end > today:
                 raise ProviderError('INVALID_ARGUMENTS', 'market.get_trading_dates', 'future calendar coverage is not verified')
-            rows, write = self.range_read(Partition('trading_dates', request.market), request, 'trading_dates',
-                lambda: self.call('market.get_trading_dates', self.source.market.get_trading_dates, request), lambda day: day)
-            self.repository.write((write,) if write else ())
-            return rows
+            start, end = self.bounds(request)
+            if request.refresh or request.count is not None or request.start is None or end != today:
+                # Open and counted calendars may not infer a beginning from the
+                # earliest stored day, so they keep the original source path.
+                return self._closed_dates(request)
+            partition = Partition('trading_dates', request.market)
+            cached = self.read(partition, start, end, 'trading_dates')
+            history_end, tail_start = self.live_split(
+                start, end, today, self.proven_end(cached.coverage) if cached else None)
+            if history_end is None:
+                return self._closed_dates(request)
+            rows = self._closed_dates(replace(request, end=history_end))
+            tail, writes = self._tail_dates(request, partition, tail_start, end, today)
+            self.repository.write(writes)
+            return tuple(sorted(set(rows) | set(tail)))
+
+    def _closed_dates(self, request):
+        rows, write = self.range_read(Partition('trading_dates', request.market), request, 'trading_dates',
+            lambda: self.call('market.get_trading_dates', self.source.market.get_trading_dates, request), lambda day: day)
+        self.repository.write((write,) if write else ())
+        return rows
+
+    def _tail_dates(self, request, partition, start, end, today):
+        """The unproven calendar remainder; only its closed days are persisted."""
+        query = replace(request, start=start, end=end, count=None)
+        started = self.clock()
+        rows = self.call('market.get_trading_dates', self.source.market.get_trading_dates, query)
+        if any(not start <= day <= end for day in rows):
+            raise ValueError('source result outside query interval')
+        closed = tuple(day for day in rows if day < today)
+        if not closed:
+            return rows, ()
+        closed_end = max(closed)
+        proof = self.evidence.assess('trading_dates', replace(query, end=closed_end), closed, start, closed_end)
+        if not proof.reusable:
+            return rows, ()
+        return rows, (Write(partition, closed, start, closed_end, proof.reusable, started),)
 
     def dividends(self, request):
         with self.locks.hold(('security', request.code)):
@@ -209,7 +293,9 @@ class PersistentData:
         return self.batch(request, one)
 
     def daily_bars(self, request):
-        return self.batch(request, lambda code: self._daily(replace(request, codes=(code,))))
+        """Answer one security at a time against its own proven cache boundary."""
+        today = self.clock().astimezone(SHANGHAI).date()
+        return self.batch(request, lambda code: self._daily(replace(request, codes=(code,)), today))
 
     def raw_write(self, request, rows, started):
         today = self.clock().astimezone(SHANGHAI).date()
@@ -222,94 +308,154 @@ class PersistentData:
         if start > end:
             return None
         evidence_request = replace(request, start=start, end=end, count=None) if rows else request
-        proof = self.evidence.assess('daily_bars', evidence_request, rows, start, end)
+        proof = self.evidence.assess('daily_bars', evidence_request, rows, start, end,
+                                     partial(self.calendar, request, start, end))
         return Write(Partition('daily_bars', request.codes[0]), rows, start, end, proof.reusable, started)
 
-    def _daily(self, request):
+    def _daily(self, request, today):
+        """Verified history up to what the cache proves, then the unproven remainder."""
         code = request.codes[0]
         start, end = self.bounds(request)
-        today = self.clock().astimezone(SHANGHAI).date()
+        events, event_writes, event_proven = self._adjustment_events(request, code)
+        if end > today or (request.count is None and request.start is None):
+            # An unprovable future bound or an open range: the exact original
+            # request, which may answer an open interval.
+            return self._source_daily(request, event_writes)
         partition = Partition('daily_bars', code)
-        writes = []
-        events = ()
-        # All adjusted queries check the full event dependency, including source fallbacks.
-        if request.adjustment != 'none':
-            event_query = DividendQuery(code, refresh=request.refresh)
-            events, event_write = self.range_read(Partition('dividend_events', code), event_query, 'dividend_events',
-                lambda: self.call('reference.get_dividend_events', self.source.reference.get_dividend_events, event_query),
-                lambda row: row.event_date, state='adjustment', state_category='adjustment_events')
-            if event_write:
-                writes.append(event_write)
-        raw_request = replace(request, adjustment='none', fill_data=False)
         cached = None if request.refresh else self.read(partition, start, end, 'daily_bars')
+        history_end, tail_start = self.live_split(
+            start, end, today, self.proven_end(cached.coverage) if cached else None)
+        if history_end is None:
+            # Nothing proven inside this window, or a refreshed request that would
+            # have to splice: the exact original request, which also seeds the cache.
+            return self._source_daily(request, event_writes)
+        if tail_start is not None and (request.adjustment != 'none' or request.fill_data):
+            # Only raw bars are safe to splice across the still-open day: the
+            # source's own factors anchor today's adjusted or filled bar, so the
+            # whole request stays on the source path.
+            return self._source_daily(request, event_writes)
+        tail, tail_writes = (), ()
+        if tail_start is not None:
+            tail, tail_writes = self._tail_bars(request, partition, tail_start, end, today)
+            if isinstance(tail, Failure):
+                return tail
+            if request.count is not None:
+                # The unproven remainder is read whole; a counted request keeps
+                # only its newest bars before splicing the confirmed history.
+                tail = tail[-request.count:]
+        history = self._history_bars(request, partition, start, history_end, tail, cached)
+        if isinstance(history, Failure):
+            return history
+        return self._answer(request, code, history.start, end, history.rows + tail,
+                            history.complete and event_proven, events,
+                            event_writes + tail_writes + history.writes, history.fetched)
+
+    def _adjustment_events(self, request, code):
+        """Event dependency rows, the write that carries them, and their verdict."""
+        if request.adjustment == 'none':
+            return (), (), True
+        event_query = DividendQuery(code, refresh=request.refresh)
+        events, event_write = self.range_read(Partition('dividend_events', code), event_query, 'dividend_events',
+            lambda: self.call('reference.get_dividend_events', self.source.reference.get_dividend_events, event_query),
+            lambda row: row.event_date, state='adjustment', state_category='adjustment_events')
+        return events, ((event_write,) if event_write else ()), (event_write is None or event_write.reusable)
+
+    def _history_bars(self, request, partition, start, end, tail, cached):
+        """Closed-window rows from the given snapshot, with the writes that back them."""
         coverage = cached.coverage if cached else ()
-        missing = gaps(start, end, coverage)
-        event_proven = request.adjustment == 'none' or event_write is None or event_write.reusable
-        # Open/count queries cannot infer a beginning from the first stored bar.
-        rows = tuple(row for row in cached.rows if any(lo <= row.trade_date <= hi for lo,hi in coverage)) if cached else ()
+        # Open/count queries cannot infer a beginning from the first stored bar,
+        # and rows outside this window belong to the tail read.
+        rows = tuple(row for row in cached.rows if start <= row.trade_date <= end
+                     and covered(row.trade_date, coverage)) if cached else ()
         if request.count is not None and cached:
+            # The live tail already answers part of the count.
+            needed = request.count - len(tail)
+            if needed <= 0:
+                return History(tail[0].trade_date, (), (), True)
             suffix = covered_suffix(end, coverage)
             available = tuple(row for row in rows if suffix is not None and row.trade_date >= suffix)
-            if len(available) >= request.count:
-                rows = available[-request.count:]
-                start = rows[0].trade_date
-                missing = ()
-        relevant_events = tuple(event for event in events if
-            (event.event_date > start if request.adjustment.startswith('front') else event.event_date <= end))
-        can_derive = event_proven and self.adjustment.supports(relevant_events, request.adjustment)
-        complete = not missing and end < today
-        raw_fetched = False
-        if not complete and request.start is not None and end < today:
-            merged = {row.trade_date: row for row in rows}
-            staged = []
-            complete = True
-            for lo,hi in missing:
-                query = replace(raw_request, start=lo, end=hi, count=None)
-                started = self.clock()
-                item = self.call('market.get_daily_bars', self.source.market.get_daily_bars, query).items[0]
-                if isinstance(item, Failure):
-                    return item
-                raw_fetched = True
-                raw = item.value.rows
-                proof = self.evidence.assess('daily_bars', query, raw, lo, hi)
-                staged.append(Write(partition, raw,lo,hi,proof.reusable,started))
-                if not proof.reusable:
-                    complete = False
-                    break
-                merged.update((row.trade_date,row) for row in raw)
-            if complete:
-                rows = tuple(merged[day] for day in sorted(merged))
-            writes.extend(staged)
-        if request.refresh and not raw_fetched and (request.adjustment != 'none' or request.fill_data):
+            if len(available) >= needed:
+                chosen = available[-needed:]
+                return History(chosen[0].trade_date, chosen, (), True)
+        missing = gaps(start, end, coverage)
+        if not missing or request.start is None:
+            return History(start, rows, (), not missing)
+        merged = {row.trade_date: row for row in rows}
+        staged = []
+        for lo,hi in missing:
+            query = replace(request, start=lo, end=hi, count=None, adjustment='none', fill_data=False)
             started = self.clock()
+            item = self.call('market.get_daily_bars', self.source.market.get_daily_bars, query).items[0]
+            if isinstance(item, Failure):
+                return item
+            raw = item.value.rows
+            proof = self.evidence.assess('daily_bars', query, raw, lo, hi,
+                                         partial(self.calendar, query, lo, hi))
+            staged.append(Write(partition, raw,lo,hi,proof.reusable,started))
+            if not proof.reusable:
+                return History(start, rows, tuple(staged), False, True)
+            merged.update((row.trade_date,row) for row in raw)
+        return History(start, tuple(merged[day] for day in sorted(merged)), tuple(staged), True, True)
+
+    def _tail_bars(self, request, partition, start, end, today):
+        """The unproven remainder, read once; only its closed part is persisted."""
+        query = replace(request, start=start, end=end, count=None, adjustment='none', fill_data=False)
+        started = self.clock()
+        item = self.call('market.get_daily_bars', self.source.market.get_daily_bars, query).items[0]
+        if isinstance(item, Failure):
+            return item, ()
+        rows = item.value.rows
+        if any(not start <= row.trade_date <= end for row in rows):
+            raise ValueError('source result outside query interval')
+        closed = tuple(row for row in rows if row.trade_date < today)
+        if not closed:
+            return rows, ()
+        closed_end = max(row.trade_date for row in closed)
+        proof = self.evidence.assess('daily_bars', replace(query, end=closed_end), closed, start, closed_end,
+                                     partial(self.calendar, query, start, closed_end))
+        if not proof.reusable:
+            return rows, ()
+        return rows, (Write(partition, closed, start, closed_end, proof.reusable, started),)
+
+    def _answer(self, request, code, start, end, rows, complete, events, writes, fetched):
+        """Derive locally once every dependency is verified; otherwise ask the source."""
+        relevant = tuple(event for event in events if
+            (event.event_date > start if request.adjustment.startswith('front') else event.event_date <= end))
+        if complete and self.adjustment.supports(relevant, request.adjustment):
+            try:
+                return self._derive(request, code, start, end, rows, events, writes)
+            except UnsupportedDerivation:
+                pass
+        # Unknown filling/event cases use the exact original query; no partial concatenation.
+        return self._source_daily(request, writes, fetched)
+
+    def _derive(self, request, code, start, end, rows, events, writes):
+        if request.fill_data:
+            market = self.evidence.market_for(code)
+            if market is None:
+                raise UnsupportedDerivation('market mapping not verified')
+            sessions = self.trading_dates(TradingDatesRequest(market, start, end))
+            rows = self.fill.derive(rows, sessions, True)
+        result = codec.decode(DailyBarSeries, codec.encode(
+            DailyBarSeries(self.adjustment.derive(rows,events,request.adjustment),request.adjustment)))
+        self.repository.write(writes)
+        return result
+
+    def _source_daily(self, request, writes=(), fetched=False):
+        """The exact original request; the only path that may answer an open interval."""
+        started = self.clock()
+        raw_request = replace(request, adjustment='none', fill_data=False)
+        if request.refresh and not fetched and (request.adjustment != 'none' or request.fill_data):
             item = self.call('market.get_daily_bars', self.source.market.get_daily_bars, raw_request).items[0]
             if isinstance(item, Failure):
                 return item
             write = self.raw_write(raw_request, item.value.rows, started)
-            if write:
-                writes.append(write)
-        if complete and can_derive:
-            try:
-                if request.fill_data:
-                    market = self.evidence.market_for(code)
-                    if market is None:
-                        raise UnsupportedDerivation('market mapping not verified')
-                    sessions = self.trading_dates(TradingDatesRequest(market, start, end))
-                    rows = self.fill.derive(rows, sessions, True)
-                result = codec.decode(DailyBarSeries, codec.encode(
-                    DailyBarSeries(self.adjustment.derive(rows,events,request.adjustment),request.adjustment)))
-                self.repository.write(writes)
-                return result
-            except UnsupportedDerivation:
-                pass
-        # Unknown filling/event cases use the exact original query; no partial concatenation.
-        started = self.clock()
+            writes = writes + ((write,) if write else ())
         item = self.call('market.get_daily_bars', self.source.market.get_daily_bars, request).items[0]
         if isinstance(item, Failure):
             return item
         if request.adjustment == 'none' and not request.fill_data:
             write = self.raw_write(raw_request, item.value.rows, started)
-            if write:
-                writes.append(write)
+            writes = writes + ((write,) if write else ())
         self.repository.write(writes)
         return item.value

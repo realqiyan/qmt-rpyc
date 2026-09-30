@@ -29,7 +29,13 @@ class Evidence:
 
 
 class CoverageEvidence(Protocol):
-    def assess(self, dataset, request, rows, start, end) -> Evidence: ...
+    """Verifies reusable intervals. `calendar` lazily supplies source sessions.
+
+    It is a zero-argument callable returning the sessions of the assessed window,
+    so evidence that does not need a calendar never pays for one, and evidence
+    that does need it can reuse the calendar the bridge already stores.
+    """
+    def assess(self, dataset, request, rows, start, end, calendar=None) -> Evidence: ...
 
 
 class ConservativeEvidence:
@@ -43,8 +49,13 @@ class ConservativeEvidence:
     def market_for(self, code):
         return None
 
-    def assess(self, dataset, request, rows, start, end):
+    def assess(self, dataset, request, rows, start, end, calendar=None):
         return Evidence(False, 'source does not attest interval coverage')
+
+
+def covered(day, intervals):
+    """Whether a continuously covered interval contains day."""
+    return any(lo <= day <= hi for lo, hi in intervals)
 
 
 def covered_suffix(end, intervals):

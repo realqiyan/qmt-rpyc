@@ -6,7 +6,8 @@ import pytest
 
 from qmt_rpyc import QmtClient
 
-pytestmark = pytest.mark.skipif(os.environ.get('QMT_RPYC_LIVE') != '1', reason='deployment acceptance is opt-in')
+pytestmark = [pytest.mark.live,
+              pytest.mark.skipif(os.environ.get('QMT_RPYC_LIVE') != '1', reason='deployment acceptance is opt-in')]
 
 
 @pytest.mark.parametrize('underlying', ['510300.SH', '159915.SZ'])
