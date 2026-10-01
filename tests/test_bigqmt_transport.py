@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from qmt_rpyc.adapters.bigqmt.bridge_queue import BridgeQueue, wire_dump
+from qmt_rpyc.adapters.bigqmt.bridge_queue import BRIDGE_VERSION, BridgeQueue, wire_dump
 from qmt_rpyc.adapters.bigqmt.bridge_runtime import StrategyRuntime
 from qmt_rpyc.adapters.bigqmt.factory import create_providers
 from qmt_rpyc.adapters.bigqmt.transport import PipeTransport
@@ -126,3 +126,23 @@ def test_legacy_pipe_close_explains_release_check_without_claiming_a_known_misma
     with pytest.raises(ProviderError, match='pipe closed by strategy; check'):
         channel.request('ping', {})
     assert len(calls) == 1
+
+
+def test_default_transport_reuses_one_persistent_client(monkeypatch):
+    import qmt_rpyc.adapters.bigqmt.transport as module
+    created = []
+    class FakeClient:
+        def __init__(self, name):
+            created.append(self)
+            self.calls = []
+        def exchange(self, raw, deadline):
+            self.calls.append(raw)
+            request = json.loads(raw)
+            return wire_dump(dict(version=BRIDGE_VERSION, instance='1' * 32, id=request['id'],
+                                  result={'runtime': 'bigqmt', 'read_only': False}))
+    monkeypatch.setattr(module, 'PipeClient', FakeClient)
+    channel = PipeTransport()
+    channel.request('ping', {})
+    channel.request('ping', {})
+    assert len(created) == 1
+    assert len(created[0].calls) == 2

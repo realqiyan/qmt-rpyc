@@ -33,8 +33,12 @@ def init(ContextInfo):
 
 
 def bigqmt_bridge_pump(ContextInfo):
-    if _bridge is not None:
+    if _service is not None and _bridge is not None:
+        # Pipe I/O and business dispatch share this callback: QMT schedules
+        # background Python threads too rarely to carry a round trip.
+        _service.poll()
         _bridge.pump()
+        _service.poll()
 
 
 def handlebar(ContextInfo):

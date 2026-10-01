@@ -25,17 +25,62 @@ def test_pending_cancel_keeps_native_buffer_event_and_pipe_until_completion():
     assert owner.handle is None
 
 
-def test_channel_does_not_close_before_client_can_read_response(monkeypatch):
+def test_channel_reuses_connection_for_next_request_after_response(monkeypatch):
     started = []
-    monkeypatch.setattr(pipe, 'Pending', lambda *args: started.append(args) or 'awaiting_eof')
+    monkeypatch.setattr(pipe, 'Pending', lambda *args: started.append(args) or 'awaiting_request')
     channel = pipe.PipeChannel.__new__(pipe.PipeChannel)
-    channel.closing, channel.ticket, channel.replied = False, None, False
-    channel.dll, channel.handle, channel.reply = object(), 123, b'reply'
+    channel.closing, channel.ticket, channel.reply = False, None, b'reply'
+    channel.dll, channel.handle = object(), 123
     channel.pending = SimpleNamespace(kind='write', poll=lambda: True, close_event=lambda: None,
                                      error=0, count=SimpleNamespace(value=5))
     assert not channel.tick()
-    assert channel.replied and channel.pending == 'awaiting_eof'
+    assert channel.pending == 'awaiting_request' and channel.ticket is None and channel.reply is None
     assert started[0][2] == 'read'
+
+
+def test_channel_closes_when_client_disconnects_instead_of_replying():
+    closed = []
+    channel = pipe.PipeChannel.__new__(pipe.PipeChannel)
+    channel.closing, channel.ticket, channel.reply = False, None, None
+    channel.dll, channel.handle = object(), 123
+    channel.bridge = object()
+    channel.close = lambda: closed.append(True) or True
+    channel.pending = SimpleNamespace(kind='read', poll=lambda: True, close_event=lambda: None,
+                                      error=0, count=SimpleNamespace(value=0))
+    assert channel.tick()
+    assert closed == [True]
+
+
+def test_client_resends_once_only_after_a_proved_unsent_write(monkeypatch):
+    events = []
+    dll = SimpleNamespace(CreateFileW=lambda *args: events.append('open') or 123,
+        SetNamedPipeHandleState=lambda *args: True,
+        CloseHandle=lambda handle: events.append('close') or True)
+    monkeypatch.setattr(pipe, 'kernel32', lambda: dll)
+    writes = [0]
+    class Pending:
+        def __init__(self, dll, handle, kind, data=None, read_limit=None):
+            events.append(kind)
+            self.kind = kind
+            if kind == 'write':
+                writes[0] += 1
+                self.error = 232 if writes[0] == 1 else 0
+                self.count = SimpleNamespace(value=len(data))
+            else:
+                self.error = 0
+                self.buffer = SimpleNamespace(raw=b'{"ok":true}')
+                self.count = SimpleNamespace(value=len(self.buffer.raw))
+        def poll(self): return True
+        def cancel(self): pass
+        def close_event(self): pass
+    monkeypatch.setattr(pipe, 'Pending', Pending)
+    client = pipe.PipeClient('test')
+    deadline = pipe.time.monotonic() + 5
+    try:
+        assert client.exchange(b'abc', deadline) == b'{"ok":true}'
+    finally:
+        client.close()
+    assert events.count('open') == 2 and events.count('write') == 2
 
 
 @pytest.mark.parametrize('fault', ['short_write', 'read_error', 'read_timeout'])

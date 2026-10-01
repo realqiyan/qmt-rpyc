@@ -1,11 +1,12 @@
 """Correlated, bounded service transport; no automatic call replay."""
+import queue
 import threading
 import time
 import uuid
 
 from qmt_rpyc.adapters.errors import ProviderError
 from .bridge_queue import BRIDGE_VERSION, MAX_WAIT_SECONDS, RESPONSE_LIMIT, wire_dump, wire_load
-from .winpipe import DEFAULT_PIPE, MAX_CONNECTIONS, exchange, pipe_path
+from .winpipe import DEFAULT_PIPE, MAX_CONNECTIONS, PipeClient, pipe_path
 
 
 class BridgeCapacityError(ProviderError):
@@ -14,11 +15,20 @@ class BridgeCapacityError(ProviderError):
 
 
 class PipeTransport:
-    def __init__(self, name=DEFAULT_PIPE, timeout=30, exchange_fn=exchange):
+    def __init__(self, name=DEFAULT_PIPE, timeout=30, exchange_fn=None):
         pipe_path(name)
         if not 0 < timeout <= MAX_WAIT_SECONDS:
             raise ValueError('bridge timeout is outside supported range')
-        self.name, self.timeout, self.exchange = name, timeout, exchange_fn
+        self.name, self.timeout = name, timeout
+        # An injected exchange is the one-shot test seam; production reuses one
+        # persistent connection per concurrent slot, so the strategy never
+        # rebuilds a pipe instance between requests.
+        self.exchange = exchange_fn
+        # LIFO so a released connection is the next one reused; the None
+        # placeholders only cover the initial concurrent slots.
+        self.pool = queue.LifoQueue()
+        for _ in range(MAX_CONNECTIONS):
+            self.pool.put(None)
         self.instance = None
         self.lock = threading.Lock()
         self.slots = threading.BoundedSemaphore(MAX_CONNECTIONS - 1)
@@ -35,6 +45,23 @@ class PipeTransport:
         with self.lock:
             if self.instance == observed_instance:
                 self.instance = None
+
+    def _acquire_client(self, deadline):
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('bridge client wait deadline')
+            try:
+                client = self.pool.get(timeout=remaining)
+            except queue.Empty:
+                raise TimeoutError('bridge client wait deadline')
+            if client is not None:
+                return client
+            try:
+                return PipeClient(self.name)
+            except Exception:
+                self.pool.put(None)
+                raise
 
     def request(self, operation, arguments, timeout=None):
         mutation = operation in ('trade_submit', 'trade_cancel')
@@ -57,7 +84,15 @@ class PipeTransport:
                 id=request_id, operation=operation, arguments=dict(arguments),
                 expires_at=time.time() + max(0, deadline - time.monotonic()))
             try:
-                raw = self.exchange(self.name, wire_dump(request), deadline)
+                wire = wire_dump(request)
+                if self.exchange is not None:
+                    raw = self.exchange(self.name, wire, deadline)
+                else:
+                    client = self._acquire_client(deadline)
+                    try:
+                        raw = client.exchange(wire, deadline)
+                    finally:
+                        self.pool.put(client)
                 reply = wire_load(raw, RESPONSE_LIMIT)
                 expected = {'version', 'instance', 'id', 'error' if 'error' in reply else 'result'}
                 if (type(reply) is not dict or set(reply) != expected or type(reply['version']) is not int

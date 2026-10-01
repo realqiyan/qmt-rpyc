@@ -2,6 +2,10 @@
 
 Python 3.6 compatible. Native requests retain their buffers through cancellation.
 No QMT business call executes in this module.
+
+Strategy-side reading and writing is driven by the QMT callback thread
+(``PipeServer.poll``); the service keeps one persistent client connection per
+concurrent slot instead of reconnecting per request.
 """
 import ctypes
 import logging
@@ -19,6 +23,10 @@ ERROR_PIPE_CONNECTED = 535
 MAX_CONNECTIONS = 4
 IO_TIMEOUT = 5.0
 DEFAULT_PIPE = "qmt_rpyc_bridge_v1"
+
+
+class PipeWriteError(OSError):
+    """WriteFile failed before anything could leave this process."""
 
 
 def pipe_path(name):
@@ -165,7 +173,6 @@ class PipeChannel(HandleOwner):
         super().__init__(dll, handle)
         self.bridge, self.ticket, self.closing = bridge, None, False
         self.reply = None
-        self.replied = False
         try:
             self.pending = Pending(dll, handle, 'connect')
         except Exception:
@@ -189,7 +196,9 @@ class PipeChannel(HandleOwner):
             return False
         pending = self.pending
         if not pending.poll():
-            if pending.kind != 'connect' and time.monotonic() - pending.started >= IO_TIMEOUT:
+            # A persistent connection may legitimately wait here for the next
+            # request; only the write phase is bounded.
+            if pending.kind == 'write' and time.monotonic() - pending.started >= IO_TIMEOUT:
                 return self.close()
             return False
         pending.close_event()
@@ -199,19 +208,23 @@ class PipeChannel(HandleOwner):
         if pending.kind == 'connect':
             self.pending = Pending(self.dll, self.handle, 'read')
         elif pending.kind == 'read':
-            if self.replied:
+            # Zero bytes means the client closed; anything else is the next
+            # request on the same persistent connection.
+            if pending.count.value == 0:
                 return self.close()
             try:
                 self.ticket = self.bridge.submit(pending.buffer.raw[:pending.count.value])
             except (ValueError, TypeError, UnicodeError, RecursionError):
                 return self.close()
         else:
-            # Wait for client EOF after the one response. Closing immediately
-            # after WriteFile risks discarding data the peer has not read yet.
+            # Reuse the connection for the next request. Closing after one
+            # response forces the strategy to rebuild a pipe instance from its
+            # own callback before it can read again.
             if pending.count.value != len(self.reply):
                 emit('short_write')
                 return self.close()
-            self.replied = True
+            self.reply = None
+            self.ticket = None
             self.pending = Pending(self.dll, self.handle, 'read')
         return False
 
@@ -225,7 +238,7 @@ class PipeServer:
         self.dll = kernel32()
         self.channels = []
         self.stopping = threading.Event()
-        self.thread = None
+        self.stopping.set()
         try:
             for index in range(MAX_CONNECTIONS):
                 self.channels.append(PipeChannel(self.dll, name, bridge, first=index == 0))
@@ -233,95 +246,141 @@ class PipeServer:
             for channel in self.channels:
                 if not channel.close():
                     retain(channel)
+            self.channels = []
             raise
 
     def start(self):
-        self.thread = threading.Thread(target=self._run, name='bigqmt-pipe-io', daemon=True)
-        self.thread.start()
+        # All pipe I/O runs on the QMT strategy callback thread. A background
+        # Python thread is scheduled too rarely by QMT to carry the request
+        # path; every GIL acquisition it needs costs about one callback
+        # window (~100ms) of the round trip.
+        self.stopping.clear()
 
-    def _run(self):
-        try:
-            while not self.stopping.is_set():
-                for channel in list(self.channels):
-                    try:
-                        closed = channel.tick()
-                    except Exception:
-                        logger.exception('BigQMT pipe channel failed')
-                        closed = channel.close()
-                    if closed:
-                        self.channels.remove(channel)
-                while len(self.channels) < MAX_CONNECTIONS:
-                    self.channels.append(PipeChannel(self.dll, self.name, self.bridge,
-                                                     first=not self.channels))
-                self.stopping.wait(.01)
-        except Exception:
-            logger.exception('BigQMT pipe listener stopped')
-        finally:
-            self.bridge.stop()
-            for channel in self.channels:
-                if not channel.close():
-                    retain(channel)
-            self.channels = []
-            reap()
+    def poll(self):
+        """Advance every channel one non-blocking step; strategy thread only."""
+        if self.stopping.is_set():
+            return
+        for channel in list(self.channels):
+            try:
+                closed = channel.tick()
+            except Exception:
+                logger.exception('BigQMT pipe channel failed')
+                closed = channel.close()
+            if closed:
+                self.channels.remove(channel)
+        while len(self.channels) < MAX_CONNECTIONS:
+            self.channels.append(PipeChannel(self.dll, self.name, self.bridge,
+                                             first=not self.channels))
 
     def stop(self):
-        self.bridge.stop()
         self.stopping.set()
-        if self.thread is not None:
-            self.thread.join(2)
-            if self.thread.is_alive():
-                raise RuntimeError('pipe I/O thread did not stop')
-        else:
-            for channel in self.channels:
-                if not channel.close():
-                    retain(channel)
-            self.channels = []
+        self.bridge.stop()
+        for channel in self.channels:
+            if not channel.close():
+                retain(channel)
+        self.channels = []
+        reap()
 
 
-def exchange(name, raw, deadline):
-    """One request, one response, no replay; deadline covers connect/write/read."""
-    if len(raw) > REQUEST_LIMIT:
-        raise ValueError('request too large')
-    if reap() >= MAX_CONNECTIONS:
-        raise RuntimeError('too many unfinished native I/O operations')
-    dll = kernel32()
-    path = pipe_path(name)
-    owner = None
-    try:
-        while time.monotonic() < deadline:
-            handle = dll.CreateFileW(path, 0xC0000000, 0, None, 3, 0x40000000, None)
+class PipeClient:
+    """Persistent client connection; one request in flight, handle reused.
+
+    Opening a connection per request forces the strategy to rebuild a pipe
+    instance from its callback before it can read the next request.
+    """
+    def __init__(self, name):
+        pipe_path(name)
+        self.name = name
+        self.dll = kernel32()
+        self.owner = None
+
+    def _connect(self, deadline):
+        while self.owner is None and time.monotonic() < deadline:
+            handle = self.dll.CreateFileW(pipe_path(self.name), 0xC0000000, 0, None,
+                                          3, 0x40000000, None)
             if handle != ctypes.c_void_p(-1).value:
-                owner = HandleOwner(dll, handle)
-                break
+                owner = HandleOwner(self.dll, handle)
+                mode = wintypes.DWORD(2)
+                if not self.dll.SetNamedPipeHandleState(handle, ctypes.byref(mode), None, None):
+                    error = ctypes.get_last_error()
+                    if not owner.close():
+                        retain(owner)
+                    raise OSError(error, 'SetNamedPipeHandleState')
+                self.owner = owner
+                return
             error = ctypes.get_last_error()
             if error not in (2, 231):
                 raise OSError(error, 'CreateFileW')
-            # Only opening an unused connection may wait. No request has been
-            # sent. Neither WriteFile nor ReadFile is ever retried as a request.
+            # Only opening an unused connection may wait; a connect retry sends
+            # no request. Only a proved-unsent write is ever resent.
             time.sleep(min(.01, max(0, deadline - time.monotonic())))
-        if owner is None:
+        if self.owner is None:
             raise TimeoutError('bridge connect deadline')
-        mode = wintypes.DWORD(2)
-        if not dll.SetNamedPipeHandleState(owner.handle, ctypes.byref(mode), None, None):
-            raise OSError(ctypes.get_last_error(), 'SetNamedPipeHandleState')
-        for kind, data in (('write', raw), ('read', None)):
-            if time.monotonic() >= deadline:
+
+    def _step(self, kind, data, deadline):
+        owner = self.owner
+        pending = Pending(self.dll, owner.handle, kind, data, read_limit=RESPONSE_LIMIT)
+        owner.pending = pending
+        while not pending.poll():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise TimeoutError('bridge I/O deadline')
-            owner.pending = Pending(dll, owner.handle, kind, data, read_limit=RESPONSE_LIMIT)
-            pending = owner.pending
-            while not pending.poll():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError('bridge I/O deadline')
-                time.sleep(min(.005, remaining))
-            if pending.error:
-                raise OSError(pending.error, 'overlapped ' + kind)
-            if kind == 'write' and pending.count.value != len(raw):
-                raise OSError('incomplete pipe write')
-            if kind == 'read':
-                return pending.buffer.raw[:pending.count.value]
+            time.sleep(min(.005, remaining))
+        if pending.error:
+            # A failed WriteFile is provable: nothing left this process, so it
+            # is the only failure the caller may resend. A failed read has an
+            # unknown outcome and is never retried.
+            if kind == 'write':
+                raise PipeWriteError(pending.error, 'overlapped write')
+            raise OSError(pending.error, 'overlapped read')
+        return pending
+
+    def _write(self, raw, deadline):
+        pending = self._step('write', raw, deadline)
+        if pending.count.value != len(raw):
+            # A short write may have reached the peer; never resend it.
+            raise OSError('incomplete pipe write')
+        pending.close_event()
+        self.owner.pending = None
+
+    def exchange(self, raw, deadline):
+        """One request, one response over the persistent handle; no replay."""
+        if len(raw) > REQUEST_LIMIT:
+            raise ValueError('request too large')
+        if reap() >= MAX_CONNECTIONS:
+            raise RuntimeError('too many unfinished native I/O operations')
+        self._connect(deadline)
+        try:
+            try:
+                self._write(raw, deadline)
+            except PipeWriteError:
+                # One reconnect-and-resend after a proved-unsent write. Read
+                # failures take the plain except path below.
+                self.close()
+                self._connect(deadline)
+                self._write(raw, deadline)
+            pending = self._step('read', None, deadline)
+            if pending.count.value == 0:
+                raise OSError(109, 'bridge peer closed')
+            result = pending.buffer.raw[:pending.count.value]
             pending.close_event()
-            owner.pending = None
+            self.owner.pending = None
+            return result
+        except Exception:
+            self.close()
+            raise
+
+    def close(self):
+        if self.owner is not None:
+            owner, self.owner = self.owner, None
+            if not owner.close():
+                retain(owner)
+
+
+def exchange(name, raw, deadline):
+    """One request over a fresh connection; the injected/test client seam."""
+    client = PipeClient(name)
+    try:
+        return client.exchange(raw, deadline)
     finally:
-        if owner is not None and not owner.close():
-            retain(owner)
+        client.close()
