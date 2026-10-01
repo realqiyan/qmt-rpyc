@@ -87,11 +87,17 @@ class DailyBarsQuery:
     adjustment: Adjustment = "none"
     fill_data: bool = True
     refresh: bool = False
+    event_cutoff: Optional[date] = None
 
     def __post_init__(self):
         validate_refresh(self.refresh)
         validate_codes(self.codes)
         validate_window(self.start, self.end, self.count)
+        if self.event_cutoff is not None:
+            if type(self.event_cutoff) is not date:
+                raise ValueError("event_cutoff must be a date")
+            if self.adjustment == "none":
+                raise ValueError("event_cutoff requires an adjusted request")
 
 
 @dataclass(frozen=True)

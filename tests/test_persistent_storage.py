@@ -371,6 +371,48 @@ def test_a_verified_adjustment_splices_the_confirmed_history(setup, adjustment):
         replace(request,start=END+timedelta(days=1),count=None,adjustment='none',fill_data=False)]
 
 
+def test_event_cutoff_excludes_later_dividends(setup):
+    source,_,data,_=setup
+    days=tuple(START+timedelta(days=i) for i in range(5))
+    source.rows=tuple(bar(day) for day in days)
+    source.events=(
+        DividendEvent(START+timedelta(days=1),NOW,2.,0.,0.,0.,0.,0.,0.),
+        DividendEvent(START+timedelta(days=3),NOW,3.,0.,0.,0.,0.,0.,0.),
+    )
+    request=DailyBarsQuery(('600000.SH',),START,END,adjustment='front_ratio',fill_data=False)
+    assert [row.close for row in data.daily_bars(request).require_all()['600000.SH'].rows]==[
+        10/2/3,10/3,10/3,10.,10.]
+    # Capping the event set at the second day drops the later third-day event.
+    cut=replace(request,event_cutoff=START+timedelta(days=2))
+    assert [row.close for row in data.daily_bars(cut).require_all()['600000.SH'].rows]==[
+        5.,10.,10.,10.,10.]
+
+
+def test_event_cutoff_with_underivable_adjustment_fails(setup):
+    source,_,data,_=setup
+    source.events=(DividendEvent(END,NOW,.9,1.,0.,0.,0.,0.,1.),)
+    cutoff=DailyBarsQuery(('600000.SH',),START,END,adjustment='back',fill_data=False,event_cutoff=END)
+    item=data.daily_bars(cutoff).items[0]
+    assert isinstance(item,Failure)
+    assert item.error.error_type=='SOURCE_ERROR'
+    assert 'event_cutoff' in item.error.message
+
+
+def test_event_cutoff_derives_without_reusable_event_coverage(setup):
+    source,repo,data,now=setup
+    days=tuple(START+timedelta(days=i) for i in range(5))
+    source.rows=tuple(bar(day) for day in days)
+    source.events=(DividendEvent(START+timedelta(days=1),NOW,2.,0.,0.,0.,0.,0.,0.),)
+    # The real QmtCoverage never attests reusable dividend coverage. A cutoff
+    # request must still derive from the events read for this request instead of
+    # failing or asking the source for a latest-anchored answer.
+    real=PersistentData(source.providers(),repo,data.policies,clock=lambda:now[0],
+                        evidence=QmtCoverage(source,clock=lambda:now[0]))
+    cutoff=DailyBarsQuery(('600000.SH',),START,END,adjustment='front_ratio',fill_data=False,event_cutoff=END)
+    result=real.daily_bars(cutoff).require_all()['600000.SH']
+    assert [row.close for row in result.rows]==[5.,10.,10.,10.,10.]
+
+
 def test_an_unverified_event_keeps_the_exact_original_request(setup):
     source,_,data,_=setup
     today=NOW.astimezone(SHANGHAI).date()

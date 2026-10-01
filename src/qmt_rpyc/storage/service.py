@@ -343,11 +343,37 @@ class PersistentData:
         """
         return self.adjustment.supports(self.relevant_events(request, events, start, end), request.adjustment)
 
+    def may_derive(self, request, events, start, end, event_proven):
+        """Whether local derivation is allowed from the events read for this request.
+
+        An explicit ``event_cutoff`` is the caller's opt-in: derive from the events
+        read for this request even when the source does not attest reusable coverage,
+        because the source's own adjustment reads the same data. Without a cutoff the
+        bridge keeps requiring reusable event coverage. An event the formula cannot
+        reproduce (gugai) still fails to derive in either case.
+        """
+        if not self.adjustment.supports(self.relevant_events(request, events, start, end), request.adjustment):
+            return False
+        return request.event_cutoff is not None or event_proven
+
     def relevant_events(self, request, events, start, end):
         """The events a derivation may apply, filtered the way the derivation filters them."""
+        events = self._cut_events(request, events)
         if request.adjustment.startswith('front'):
             return tuple(event for event in events if event.event_date > start)
         return tuple(event for event in events if event.event_date <= end)
+
+    def _cut_events(self, request, events):
+        """Drop events after an explicit cutoff so a historical request stays causal."""
+        cutoff = request.event_cutoff
+        if cutoff is None:
+            return events
+        return tuple(event for event in events if event.event_date <= cutoff)
+
+    @staticmethod
+    def _cutoff_failure(code):
+        return Failure(code, ItemError(
+            'SOURCE_ERROR', 'event_cutoff requires a locally derivable adjustment'))
 
     def _daily(self, request, today):
         """Verified history up to what the cache proves, then the unproven remainder."""
@@ -415,7 +441,8 @@ class PersistentData:
         merged = {row.trade_date: row for row in rows}
         staged = []
         for lo,hi in missing:
-            query = replace(request, start=lo, end=hi, count=None, adjustment='none', fill_data=False)
+            query = replace(request, start=lo, end=hi, count=None, adjustment='none', fill_data=False,
+                            event_cutoff=None)
             started = self.clock()
             item = self.call('market.get_daily_bars', self.source.market.get_daily_bars, query).items[0]
             if isinstance(item, Failure):
@@ -431,7 +458,8 @@ class PersistentData:
 
     def _tail_bars(self, request, partition, start, end, today):
         """The unproven remainder, read once; only its closed part is persisted."""
-        query = replace(request, start=start, end=end, count=None, adjustment='none', fill_data=False)
+        query = replace(request, start=start, end=end, count=None, adjustment='none', fill_data=False,
+                        event_cutoff=None)
         started = self.clock()
         item = self.call('market.get_daily_bars', self.source.market.get_daily_bars, query).items[0]
         if isinstance(item, Failure):
@@ -451,12 +479,13 @@ class PersistentData:
 
     def _answer(self, request, code, start, end, rows, history_complete, event_proven, events, writes):
         """Derive locally once every dependency is verified; otherwise ask the source."""
-        relevant = self.relevant_events(request, events, start, end)
-        if history_complete and event_proven and self.adjustment.supports(relevant, request.adjustment):
+        if history_complete and self.may_derive(request, events, start, end, event_proven):
             try:
                 return self._derive(request, code, start, end, rows, events, writes)
             except UnsupportedDerivation:
                 pass
+        if request.event_cutoff is not None:
+            return self._cutoff_failure(code)
         # Unknown filling/event cases use the exact original query; no partial concatenation.
         return self._source_daily(request, events, event_proven, writes)
 
@@ -467,7 +496,7 @@ class PersistentData:
                 raise UnsupportedDerivation('market mapping not verified')
         # The source fills after adjusting, so a halt crossing an ex-dividend date
         # keeps the adjusted series continuous; the same order is used here.
-        adjusted = self.adjustment.derive(rows, events, request.adjustment)
+        adjusted = self.adjustment.derive(rows, self._cut_events(request, events), request.adjustment)
         if request.fill_data:
             sessions = self.trading_dates(TradingDatesRequest(market, start, end))
             adjusted = self.fill.derive(adjusted, sessions, True)
@@ -489,11 +518,12 @@ class PersistentData:
         """
         started = self.clock()
         today = self.clock().astimezone(SHANGHAI).date()
-        raw_request = replace(request, adjustment='none', fill_data=False)
+        raw_request = replace(request, adjustment='none', fill_data=False, event_cutoff=None)
         start, end = self.bounds(raw_request)
         # A future bound is never provable, so it keeps the source's own answer.
-        derivable = end <= today and event_proven and self.adjustment.supports(
-            self.relevant_events(request, events, start, end), request.adjustment)
+        derivable = end <= today and self.may_derive(request, events, start, end, event_proven)
+        if request.event_cutoff is not None and not derivable:
+            return self._cutoff_failure(request.codes[0])
         if not (derivable or request.refresh):
             return self._source_answer(request, writes)
         raw = self.call('market.get_daily_bars', self.source.market.get_daily_bars, raw_request).items[0]
@@ -509,7 +539,8 @@ class PersistentData:
             try:
                 return self._derive(request, request.codes[0], start, end, raw.value.rows, events, staged)
             except UnsupportedDerivation:
-                pass
+                if request.event_cutoff is not None:
+                    return self._cutoff_failure(request.codes[0])
         return self._source_answer(request, staged)
 
     def _source_answer(self, request, writes):

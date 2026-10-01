@@ -101,12 +101,13 @@ def manifest():
     return {
         "contract_version": CONTRACT_VERSION,
         "codec": "strict-json-utc-microseconds",
-        "behavior_revision": 2,
+        "behavior_revision": 3,
         "max_codes": MAX_CODES,
         "semantics": {
             "identity": "opaque; preserve broker suffix; no whitespace normalization",
             "date_range": "inclusive; daily bars and history downloads use dates; daily period only",
             "daily_bars_window": "server resolved: an unset beginning is one year before the request end, and never precedes the reported listing date",
+            "event_cutoff": "daily bars: ignore dividend events after this date when deriving adjustment; requires a locally derivable adjustment or the item fails",
             "count": "positive; mutually exclusive with start; None means all in range",
             "expiry": "Shanghai market date, includes today; current discovery only",
             "batch": "one result per requested code, same order; no hidden retries",

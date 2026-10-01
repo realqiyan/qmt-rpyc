@@ -57,7 +57,8 @@ def test_requests_use_dates_and_explicit_defaults_without_remote_objects():
     assert result.require_all()["510050.SH"].rows == ()
     payload = value._conn.root.calls[0]["payload"]
     assert payload == {"codes": ["510050.SH"], "start": None, "end": "2026-09-24", "count": 20,
-                       "adjustment": "none", "fill_data": True, "refresh": False}
+                       "adjustment": "none", "fill_data": True, "refresh": False,
+                       "event_cutoff": None}
 
 
 def test_empty_codes_do_not_dispatch_or_masquerade_as_market_query():

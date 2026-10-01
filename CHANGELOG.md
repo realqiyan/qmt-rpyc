@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0rc3] - 2026-09-30
+
+- Add an optional `event_cutoff` (date) to `market.get_daily_bars`: local
+  adjustment derivation applies only dividend/ex-dividend events on or before
+  the cutoff, so a historical as-of request is not rewritten by a later event.
+  The field defaults to `None`, which keeps the existing latest-anchored
+  semantics. Setting it requires a locally derivable adjustment; a security the
+  bridge cannot derive locally returns an error instead of falling back to the
+  source's latest-anchored result.
+- The cutoff is a derivation parameter, not a stored dimension: the
+  `daily_bars`, `dividend_events` tables and their coverage are unchanged and
+  need no migration. The request field raises `behavior_revision` to 3, so the
+  client and server must be upgraded together.
+
 ## [0.9.0rc2] - 2026-09-30
 
 - Restore the BigQMT option-discovery reader methods (`get_option_codes` and
