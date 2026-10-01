@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.9.0rc4] - 2026-10-01
+
+- Serve BigQMT bridge pipe I/O from the strategy's own `run_time` callback
+  instead of a background thread, and reuse one persistent connection per
+  concurrent slot on both sides. QMT schedules background Python threads too
+  rarely to carry a request, so an end-to-end bridge round trip measured
+  400-1100 ms at about 1.2 requests/s; draining on the callback thread and
+  keeping connections open removes the per-tick GIL handoff and the
+  per-request reconnect.
+- The change is transport-internal: the public contract and bridge
+  compatibility identifiers stay 9 and the JSON wire format is unchanged.
+  The service package and a regenerated `bigqmt_strategy.py` must still be
+  deployed together — a partially upgraded pair alternates request failures
+  until both halves are updated, so update both before validating.
+- Review hardening: serialize `poll`/`stop` against a stop from another thread,
+  release pipe handles when a crashed strategy drops its server object, keep a
+  channel-creation failure from escaping the strategy callback, and never
+  resend a read or a short write (only a `WriteFile` that provably never left
+  the process is retried once).
+- Windows/QMT runtime validation of this release candidate is pending.
+
 ## [0.9.0rc3] - 2026-09-30
 
 - Add an optional `event_cutoff` (date) to `market.get_daily_bars`: local
