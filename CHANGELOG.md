@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.0] - 2026-10-01
+
+- Release the validated 0.9.0rc4 runtime as stable on PyPI, with no runtime
+  changes beyond the version. The public contract and BigQMT bridge
+  compatibility identifiers remain 9.
+- The 0.9.0 series derives daily bars, their adjustments and suspension
+  filling locally from the source's unadjusted series, adds an `event_cutoff`
+  derivation parameter, and removes the sector read and download surface.
+- The BigQMT strategy bridge serves pipe I/O from the strategy's own
+  `run_time` callback and reuses one persistent connection per concurrent
+  slot, removing the per-tick GIL handoff and per-request reconnect that made
+  a round trip cost 400-1100 ms. The service package and a regenerated
+  `bigqmt_strategy.py` must be deployed together.
+- Windows/QMT validation covered the BigQMT bridge round trip under load,
+  strategy and service restart recovery, the stock-account trading path and
+  the persistent data-storage acceptance steps.
+
 ## [0.9.0rc4] - 2026-10-01
 
 - Serve BigQMT bridge pipe I/O from the strategy's own `run_time` callback
