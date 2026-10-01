@@ -33,12 +33,18 @@ def init(ContextInfo):
 
 
 def bigqmt_bridge_pump(ContextInfo):
-    if _service is not None and _bridge is not None:
-        # Pipe I/O and business dispatch share this callback: QMT schedules
-        # background Python threads too rarely to carry a round trip.
+    if _service is None or _bridge is None:
+        return
+    # Pipe I/O and business dispatch share this callback: QMT schedules
+    # background Python threads too rarely to carry a round trip. An
+    # unhandled exception can stop the whole strategy, so it never propagates.
+    try:
         _service.poll()
         _bridge.pump()
         _service.poll()
+    except Exception:
+        import traceback
+        traceback.print_exc()
 
 
 def handlebar(ContextInfo):

@@ -51,6 +51,42 @@ def test_channel_closes_when_client_disconnects_instead_of_replying():
     assert closed == [True]
 
 
+def test_handle_owner_releases_handle_when_collected():
+    closed = []
+    owner = pipe.HandleOwner(SimpleNamespace(CloseHandle=lambda handle: closed.append(handle) or True), 7)
+    owner.__del__()
+    assert closed == [7] and owner.handle is None
+
+
+def test_poll_advances_each_channel_repeatedly(monkeypatch):
+    ticks = []
+    class Channel:
+        def tick(self):
+            ticks.append(1)
+            return False
+    server = pipe.PipeServer.__new__(pipe.PipeServer)
+    server.stopping = pipe.threading.Event()
+    server.lock = pipe.threading.RLock()
+    server.channels = [Channel()]
+    monkeypatch.setattr(pipe, 'MAX_CONNECTIONS', 1)
+    server.poll()
+    assert len(ticks) == pipe.POLL_STEPS
+
+
+def test_poll_swallows_channel_creation_failure(monkeypatch):
+    server = pipe.PipeServer.__new__(pipe.PipeServer)
+    server.stopping = pipe.threading.Event()
+    server.lock = pipe.threading.RLock()
+    server.channels = []
+    server.dll, server.name, server.bridge = object(), 'test', object()
+    def fail(*args, **kwargs):
+        raise OSError(5, 'access denied')
+    monkeypatch.setattr(pipe, 'PipeChannel', fail)
+    monkeypatch.setattr(pipe, 'MAX_CONNECTIONS', 1)
+    server.poll()
+    assert server.channels == []
+
+
 def test_client_resends_once_only_after_a_proved_unsent_write(monkeypatch):
     events = []
     dll = SimpleNamespace(CreateFileW=lambda *args: events.append('open') or 123,

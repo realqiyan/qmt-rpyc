@@ -22,6 +22,9 @@ ERROR_IO_INCOMPLETE = 996
 ERROR_PIPE_CONNECTED = 535
 MAX_CONNECTIONS = 4
 IO_TIMEOUT = 5.0
+# A single callback pass may need to finish a write, read the next request and
+# hand it to the dispatcher; without this the round trip slips to the next tick.
+POLL_STEPS = 4
 DEFAULT_PIPE = "qmt_rpyc_bridge_v1"
 
 
@@ -132,6 +135,15 @@ class HandleOwner:
     def __init__(self, dll, handle):
         self.dll, self.handle, self.pending = dll, handle, None
 
+    def __del__(self):
+        # Best effort: a strategy that dies without stop() drops the server
+        # object here. A leaked instance would make the next reload fail on
+        # FILE_FLAG_FIRST_PIPE_INSTANCE with ERROR_ACCESS_DENIED.
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def close(self):
         if self.pending is not None:
             self.pending.cancel()
@@ -237,6 +249,7 @@ class PipeServer:
         self.name, self.bridge = name, bridge
         self.dll = kernel32()
         self.channels = []
+        self.lock = threading.RLock()
         self.stopping = threading.Event()
         self.stopping.set()
         try:
@@ -254,32 +267,47 @@ class PipeServer:
         # Python thread is scheduled too rarely by QMT to carry the request
         # path; every GIL acquisition it needs costs about one callback
         # window (~100ms) of the round trip.
-        self.stopping.clear()
+        with self.lock:
+            self.stopping.clear()
 
     def poll(self):
-        """Advance every channel one non-blocking step; strategy thread only."""
-        if self.stopping.is_set():
-            return
-        for channel in list(self.channels):
-            try:
-                closed = channel.tick()
-            except Exception:
-                logger.exception('BigQMT pipe channel failed')
-                closed = channel.close()
-            if closed:
-                self.channels.remove(channel)
-        while len(self.channels) < MAX_CONNECTIONS:
-            self.channels.append(PipeChannel(self.dll, self.name, self.bridge,
-                                             first=not self.channels))
+        """Advance every channel as far as it can go; strategy thread only.
+
+        The lock only guards a stop() racing from another thread; normal use is
+        single-threaded and non-blocking.
+        """
+        with self.lock:
+            if self.stopping.is_set():
+                return
+            for channel in list(self.channels):
+                for _ in range(POLL_STEPS):
+                    try:
+                        closed = channel.tick()
+                    except Exception:
+                        logger.exception('BigQMT pipe channel failed')
+                        closed = channel.close()
+                    if closed:
+                        self.channels.remove(channel)
+                        break
+            while len(self.channels) < MAX_CONNECTIONS:
+                try:
+                    self.channels.append(PipeChannel(self.dll, self.name, self.bridge,
+                                                     first=not self.channels))
+                except Exception:
+                    # A transient creation failure must not stop the strategy
+                    # callback; the next tick retries.
+                    logger.exception('BigQMT pipe channel creation failed')
+                    break
 
     def stop(self):
-        self.stopping.set()
-        self.bridge.stop()
-        for channel in self.channels:
-            if not channel.close():
-                retain(channel)
-        self.channels = []
-        reap()
+        with self.lock:
+            self.stopping.set()
+            self.bridge.stop()
+            for channel in self.channels:
+                if not channel.close():
+                    retain(channel)
+            self.channels = []
+            reap()
 
 
 class PipeClient:
