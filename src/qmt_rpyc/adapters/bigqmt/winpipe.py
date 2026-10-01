@@ -138,9 +138,12 @@ class HandleOwner:
     def __del__(self):
         # Best effort: a strategy that dies without stop() drops the server
         # object here. A leaked instance would make the next reload fail on
-        # FILE_FLAG_FIRST_PIPE_INSTANCE with ERROR_ACCESS_DENIED.
+        # FILE_FLAG_FIRST_PIPE_INSTANCE with ERROR_ACCESS_DENIED. CancelIoEx is
+        # asynchronous, so hand an unfinished close to reap(), which retries at
+        # the next PipeServer start.
         try:
-            self.close()
+            if not self.close():
+                retain(self)
         except Exception:
             pass
 

@@ -58,6 +58,19 @@ def test_handle_owner_releases_handle_when_collected():
     assert closed == [7] and owner.handle is None
 
 
+def test_handle_owner_del_retains_when_close_cannot_finish(monkeypatch):
+    retained = []
+    monkeypatch.setattr(pipe, 'retain', lambda owner: retained.append(owner))
+    class Pending:
+        def cancel(self): pass
+        def poll(self): return False
+        def close_event(self): raise AssertionError('event must not be released before completion')
+    owner = pipe.HandleOwner(SimpleNamespace(CloseHandle=lambda handle: True), 9)
+    owner.pending = Pending()
+    owner.__del__()
+    assert retained == [owner] and owner.handle == 9
+
+
 def test_poll_advances_each_channel_repeatedly(monkeypatch):
     ticks = []
     class Channel:
