@@ -2,7 +2,7 @@
 
 A typed Python bridge to a broker-customized QMT/MiniQMT deployment. The server runs on Windows with Python 3.10/3.11; clients support Python 3.9+ on Linux, macOS and Windows.
 
-Current source version: **0.9.0**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
+Current source version: **0.9.1**. Matching builds are recommended; connection compatibility is checked by contract version and hash. [中文](README.md) · [Architecture](docs/design/architecture.md) · [Operations and fields](docs/api/contract.md)
 
 ## Install from source
 
@@ -22,15 +22,17 @@ scripts\setup.bat
 
 Source scripts create an editable `.venv` using the checkout `.env`. `start` now runs in the background under the current user; use `start --foreground` for debugging. Each Python environment manages one service instance.
 
-For first installation, run `install-server.bat` (BigQMT: `install-server.bat --adapter bigqmt`). It prefers a single adjacent wheel, otherwise the pinned release (currently 0.9.0; release candidates come from TestPyPI, stable releases from PyPI), installs into `%LOCALAPPDATA%\qmt-rpyc\venv`, preserves configuration, and prints next commands. It refuses to overwrite an existing installation. Use the installed `%LOCALAPPDATA%\qmt-rpyc\venv\Scripts\qmt-rpyc-server.exe` with `start`, `stop`, `restart`, `status`, or `update` thereafter. `restart` preserves the original configuration and environment overrides. `status` distinguishes process state, RPC readiness and QMT connectivity; local process state remains available without RPC. Background log paths are included in command output. Windows services, boot startup and crash supervision are not included.
+For first installation, run `install-server.bat` (BigQMT: `install-server.bat --adapter bigqmt`). It prefers a single adjacent wheel, otherwise the pinned release (currently 0.9.1; release candidates come from TestPyPI, stable releases from PyPI), installs into `%LOCALAPPDATA%\qmt-rpyc\venv`, preserves configuration, and prints next commands. It refuses to overwrite an existing installation. Use the installed `%LOCALAPPDATA%\qmt-rpyc\venv\Scripts\qmt-rpyc-server.exe` with `start`, `stop`, `restart`, `status`, or `update` thereafter. `restart` preserves the original configuration and environment overrides. `status` distinguishes process state, RPC readiness and QMT connectivity; local process state remains available without RPC. Background log paths are included in command output. Windows services, boot startup and crash supervision are not included.
 
 ### Local updates
+
+See [local update design](docs/design/software-update.md) for the mechanism and limits.
 
 ```bash
 qmt-rpyc-client update
 qmt-rpyc-server update
 qmt-rpyc-server update --pre
-qmt-rpyc-server update --version 0.9.0
+qmt-rpyc-server update --version 0.9.1
 ```
 
 Updates affect the current local Python environment only. Stable releases come from official PyPI; `--pre` or an explicit prerelease version selects official TestPyPI for qmt-rpyc, while third-party dependencies come from official PyPI. Explicit versions may downgrade, including to versions without process management. Default updates never downgrade. Unchanged versions leave the service untouched. Editable installations must be updated through Git instead.
@@ -47,7 +49,7 @@ Server environment variables override the selected configuration file (`--config
 With `.[dev]` installed, `python -m build` creates a wheel/sdist; the release workflow separately assembles the Windows ZIP. Stable releases are published to PyPI. For a first server installation:
 
 ```bat
-py -3.11 -m pip install --index-url https://pypi.org/simple "qmt-rpyc[server]==0.9.0"
+py -3.11 -m pip install --index-url https://pypi.org/simple "qmt-rpyc[server]==0.9.1"
 ```
 
 For the client, omit `[server]`. Existing installations can use `qmt-rpyc-client update` or `qmt-rpyc-server update`. Prerelease testing still uses `update --pre` to fetch the target package from TestPyPI.
@@ -127,10 +129,10 @@ Synthetic SDK and local socket tests are portable. Read-only deployment tests re
 This project does not distribute xtquant, QMT or MiniQMT. [MIT License](LICENSE).
 
 
-### Full QMT in 0.9.0
+### Full QMT in 0.9.1
 
-Upgrade both client and server for public contract v8. The Windows release ZIP includes
-`bigqmt_strategy.py` encoded as GBK (private bridge protocol 9). Load it in full QMT,
+Use matching client, server and strategy builds; see [version rules](docs/versioning.md). The Windows release ZIP includes
+`bigqmt_strategy.py` encoded as GBK. Load it in full QMT,
 then install with `install-server.bat --adapter bigqmt` and use the installed
 `qmt-rpyc-server start`; existing configuration is preserved.
 Startup never submits trades. BigQMT trades use the STOCK account supplied per request.

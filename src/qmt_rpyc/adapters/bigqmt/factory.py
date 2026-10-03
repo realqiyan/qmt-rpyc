@@ -30,7 +30,7 @@ def create_providers(connection=None, workers=8, environment=None):
     options = OptionsAdapter(reader, workers)
     connection.discovery_cache = options.cache
     return Providers(MarketAdapter(reader, workers), ReferenceAdapter(reader),
-        InstrumentsAdapter(reader, workers, options=options, underlying_cache=None), options,
+        InstrumentsAdapter(reader, workers, options=options), options,
         FinancialsAdapter(reader, workers), TradingAdapter(connection.transport), DownloadAdapter(), Capabilities(operations))
 
 

@@ -30,8 +30,6 @@ class DebugGateway:
                     if target == 'bridge.clear_cache':
                         self.connection.discovery_cache.clear()
                     data = self.connection.discovery_cache.info()
-                    if hasattr(self.connection, 'underlying_cache'):
-                        data['underlyings'] = self.connection.underlying_cache.info()
                 return dumps(dict(status='ok', data=data))
             phase = 'sdk_execution'
             result = self.connection.transport.request('debug', {'request': request})

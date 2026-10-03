@@ -3,7 +3,8 @@
 The source calendar is authoritative only for an explicitly bounded past query. Bars
 are reusable only with one actual bar for every source session. Missing sessions may
 be suspensions or data not downloaded yet; they remain unknown. Financial/event
-completeness has no deployed attestation and remains observed.
+completeness for xtquant has no deployed attestation and remains observed;
+BigQMT's explicit event collection has its own evidence rule below.
 """
 import logging
 from qmt_rpyc.contracts.market import TradingDatesRequest

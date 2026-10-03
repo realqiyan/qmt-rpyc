@@ -2,7 +2,7 @@
 
 通过固定的 Python 模型和操作连接 QMT/MiniQMT。Windows 服务端对接券商定制 xtquant；客户端支持 Linux、macOS 和 Windows。
 
-当前源码版本 **0.9.0**。建议客户端与服务端安装同一份构建；连接时按契约版本和指纹检查兼容性。
+当前源码版本 **0.9.1**。建议客户端与服务端安装同一份构建；连接时按契约版本和指纹检查兼容性。
 [English](README.en.md) · [架构](docs/design/architecture.md) · [完整接口及字段](docs/api/contract.md)
 
 ## 安装与启动
@@ -25,7 +25,7 @@ scripts\setup.bat
 
 源码脚本创建 `.venv` 并使用仓库 `.env`。服务端 `start` 默认在当前用户下后台运行；调试使用 `start --foreground`。一个 Python 环境管理一个服务实例，多实例使用不同虚拟环境。
 
-Windows 首次安装运行 `install-server.bat`；BigQMT 使用 `install-server.bat --adapter bigqmt`，适配器选择会保存到配置。同目录唯一 wheel 优先，否则安装脚本固定的版本（当前 0.9.0；rc 版本从 TestPyPI 获取，正式版本从 PyPI 获取）。安装器仅用于首次安装，将包安装到 `%LOCALAPPDATA%\qmt-rpyc\venv`，保留已有配置，输出后续命令。已安装环境使用以下入口，不再重复运行安装器：
+Windows 首次安装运行 `install-server.bat`；BigQMT 使用 `install-server.bat --adapter bigqmt`，适配器选择会保存到配置。同目录唯一 wheel 优先，否则安装脚本固定的版本（当前 0.9.1；rc 版本从 TestPyPI 获取，正式版本从 PyPI 获取）。安装器仅用于首次安装，将包安装到 `%LOCALAPPDATA%\qmt-rpyc\venv`，保留已有配置，输出后续命令。已安装环境使用以下入口，不再重复运行安装器：
 
 ```bat
 "%LOCALAPPDATA%\qmt-rpyc\venv\Scripts\qmt-rpyc-server.exe" start
@@ -38,11 +38,13 @@ Windows 首次安装运行 `install-server.bat`；BigQMT 使用 `install-server.
 
 ### 本机升级
 
+升级机制与限制见[本机软件升级设计](docs/design/software-update.md)。
+
 ```bash
 qmt-rpyc-client update
 qmt-rpyc-server update
 qmt-rpyc-server update --pre
-qmt-rpyc-server update --version 0.9.0
+qmt-rpyc-server update --version 0.9.1
 ```
 
 默认升级到官方 PyPI 最新稳定版；`--pre` 或明确指定预发布版本时，从官方 TestPyPI 获取目标包，第三方依赖始终从官方 PyPI 获取。允许指定旧版本降级，不因旧版本缺少后台管理能力而拒绝。默认不会降级，版本无变化时不停止服务。editable 源码安装应通过 Git 更新，`update` 会拒绝覆盖它。
@@ -56,7 +58,7 @@ Windows 为释放运行中的 CLI 可执行文件，命令先返回 `scheduled` 
 安装 `.[dev]` 后可用 `python -m build` 构建 wheel/sdist，在两端安装同一个 wheel；该命令不生成 Windows ZIP。ZIP 由发布工作流组装。正式版发布到 PyPI，首次安装服务端：
 
 ```bat
-py -3.11 -m pip install --index-url https://pypi.org/simple "qmt-rpyc[server]==0.9.0"
+py -3.11 -m pip install --index-url https://pypi.org/simple "qmt-rpyc[server]==0.9.1"
 ```
 
 客户端安装时去掉 `[server]`；已安装环境使用 `qmt-rpyc-client update` 或 `qmt-rpyc-server update`。测试预发布版仍使用 `update --pre`，从 TestPyPI 获取目标包。
@@ -159,11 +161,10 @@ python scripts/dump_contract.py
 本项目不分发 xtquant、QMT 或 MiniQMT，不提供投资建议。许可证为 [MIT](LICENSE)。
 
 
-### 0.9.0 完整 QMT 部署
+### 0.9.1 完整 QMT 部署
 
-客户端与服务端同步升级（公共契约 v8）。Windows 发布 ZIP 包含 GBK 编码的
-`bigqmt_strategy.py`：在完整 QMT 加载运行，保持 GBK 编码；私有桥协议为 9。
-协议编号升到 9，必须使用同一发行版的服务端、客户端与重新生成的策略文件。
+客户端、服务端与重新生成的策略文件须配套，兼容编号见[版本规则](docs/versioning.md)。Windows 发布 ZIP 包含 GBK 编码的
+`bigqmt_strategy.py`：在完整 QMT 加载运行，保持 GBK 编码。
 首次使用 `install-server.bat --adapter bigqmt` 安装，再执行已安装的 `qmt-rpyc-server start`；现有配置保留。
 从源码部署时先生成策略并复制到完整 QMT 的独立策略运行：`python scripts/build_bigqmt_strategy.py --output dist/bigqmt_strategy.py`。
 本机只读自检（不下单、不下载）：`python scripts/check_bigqmt_bridge.py --extended`。

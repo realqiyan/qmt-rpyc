@@ -1,4 +1,4 @@
-# server/main.py
+"""Compose providers and run the authenticated RPC server."""
 import faulthandler
 import logging
 import os
@@ -6,6 +6,11 @@ import sys
 from pathlib import Path
 
 from qmt_rpyc.adapters.registry import DEFAULT_ADAPTER, select_adapter
+from qmt_rpyc.server.config import (
+    default_server_dir,
+    load_config as _load_config,
+    validate_config as _validate_config,
+)
 from qmt_rpyc.server.logging_config import setup_logging
 from qmt_rpyc.server.redaction import mask_account
 from qmt_rpyc.version import __version__
@@ -13,17 +18,6 @@ from qmt_rpyc.contracts.operations import CONTRACT_VERSION
 
 logger = logging.getLogger(__name__)
 _crash_fp = None
-
-
-def default_server_dir():
-    base = os.environ.get("LOCALAPPDATA")
-    if base:
-        return Path(base) / "qmt-rpyc"
-    return Path.home() / ".qmt-rpyc"
-
-
-def default_config_path():
-    return default_server_dir() / "config.env"
 
 
 def _enable_crash_log(log_dir):
@@ -39,95 +33,6 @@ def _enable_crash_log(log_dir):
         faulthandler.enable(file=_crash_fp, all_threads=True)
     except Exception:
         faulthandler.enable()
-
-
-def _env_int(name, default, minimum, maximum=None):
-    raw = os.environ.get(name, str(default))
-    try:
-        value = int(raw)
-    except ValueError as e:
-        raise ValueError(f"{name} must be an integer, got {raw!r}") from e
-    if value < minimum or (maximum is not None and value > maximum):
-        if maximum is None:
-            expected = f">= {minimum}"
-        else:
-            expected = f"between {minimum} and {maximum}"
-        raise ValueError(f"{name} must be {expected}, got {value}")
-    return value
-
-
-def _env_bool(name, default=False):
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    normalized = raw.strip().lower()
-    if normalized in ("1", "true", "yes", "on"):
-        return True
-    if normalized in ("0", "false", "no", "off"):
-        return False
-    raise ValueError(f"{name} must be a boolean, got {raw!r}")
-
-
-def _load_config(config_path=None):
-    from dotenv import load_dotenv
-    path = Path(config_path) if config_path else default_config_path()
-    load_dotenv(str(path), override=False)
-    return {
-        "host": os.environ.get("QMT_RPYC_HOST", "0.0.0.0"),
-        "port": _env_int("QMT_RPYC_PORT", 18812, 1, 65535),
-        "auth_key": os.environ.get("QMT_RPYC_AUTH_KEY"),
-        "allow_insecure": _env_bool("QMT_RPYC_ALLOW_INSECURE"),
-        "debug": _env_bool("QMT_RPYC_DEBUG"),
-        "cache_path": os.environ.get("QMT_RPYC_CACHE_PATH", ""),
-        "cache_source": os.environ.get("QMT_RPYC_CACHE_SOURCE", ""),
-        "cache_policies": os.environ.get("QMT_RPYC_CACHE_POLICIES", "{}"),
-        "adapter": os.environ.get("QMT_RPYC_ADAPTER", DEFAULT_ADAPTER),
-        "bigqmt_pipe": os.environ.get("QMT_RPYC_BIGQMT_PIPE", "qmt_rpyc_bridge_v1"),
-        "bigqmt_timeout": _env_int("QMT_RPYC_BIGQMT_TIMEOUT", 30, 1, 120),
-        "qmt_path": os.environ.get("QMT_PATH", ""),
-        "xtquant_path": os.environ.get("QMT_XTQUANT_PATH", ""),
-        "qmt_session_id": _env_int("QMT_SESSION_ID", 1, 0),
-        "qmt_account_id": os.environ.get("QMT_ACCOUNT_ID", ""),
-        "tls_keyfile": os.environ.get("QMT_RPYC_TLS_KEY"),
-        "tls_certfile": os.environ.get("QMT_RPYC_TLS_CERT"),
-        "tls_ca_certs": os.environ.get("QMT_RPYC_TLS_CA"),
-        "log_dir": os.environ.get(
-            "QMT_RPYC_LOG_DIR", str(default_server_dir() / "logs")
-        ),
-        "config_path": str(path),
-        "heartbeat_interval": _env_int(
-            "QMT_HEARTBEAT_INTERVAL", 30, 1),
-        "heartbeat_timeout": _env_int(
-            "QMT_HEARTBEAT_TIMEOUT", 5, 1),
-        "heartbeat_max_failures": _env_int(
-            "QMT_HEARTBEAT_MAX_FAILURES", 3, 1),
-        "reconnect_max_attempts": _env_int(
-            "QMT_RECONNECT_MAX_ATTEMPTS", 0, 0),
-    }
-
-
-def _validate_config(cfg):
-    from qmt_rpyc.storage.policy import StorageConfig
-    StorageConfig.from_config(cfg, default_server_dir())
-    adapter = select_adapter(cfg.get("adapter", DEFAULT_ADAPTER))
-    if not adapter.requires_native_sdk:
-        from qmt_rpyc.adapters.bigqmt.winpipe import pipe_path
-        pipe_path(cfg.get("bigqmt_pipe", "qmt_rpyc_bridge_v1"))
-    auth_key = cfg.get("auth_key")
-    invalid_auth_key = (
-        not isinstance(auth_key, str)
-        or not auth_key.strip()
-        or auth_key == "your-secret-key-here"
-    )
-    if invalid_auth_key and not cfg.get(
-            "allow_insecure", False):
-        raise ValueError(
-            "QMT_RPYC_AUTH_KEY must be non-empty and not use the placeholder; "
-            "set "
-            "QMT_RPYC_ALLOW_INSECURE=1 only for an isolated test environment")
-    if bool(cfg.get("tls_keyfile")) != bool(cfg.get("tls_certfile")):
-        raise ValueError(
-            "QMT_RPYC_TLS_KEY and QMT_RPYC_TLS_CERT must be configured together")
 
 
 def _print_startup_info(cfg, cm):

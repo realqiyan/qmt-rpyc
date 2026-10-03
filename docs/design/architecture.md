@@ -1,151 +1,65 @@
 # 类型化 QMT 桥接架构
 
-目标是固定公共操作名称、请求参数、返回类型和错误语义，并允许替换底层实现。
-OpenAPI 是描述接口的参考；当前传输使用 RPyC，不提供 HTTP 服务。
+qmt-rpyc 提供稳定的类型化业务操作，隔离客户端与券商 SDK 的差异。公共契约的权威定义是 [operations.py](../../src/qmt_rpyc/contracts/operations.py)，字段和调用行为见 [API 文档](../api/contract.md)，兼容编号与发行版本见[版本规则](../versioning.md)。本文集中记录架构、选择理由及运行限制。
 
 ## 模块与依赖
 
-- `contracts/`：按 market、instruments、options、reference、financials、trading、downloads、system 组织冻结 dataclass；同一业务请求和结果在一起。`common.py` 定义批量项与错误；`operations.py` 是唯一操作注册表，`schema.py` 推导描述，`validation.py` 校验请求和结果的对应关系。
-- `client/`：公共 `QmtClient` 组合能力入口；下载句柄只查询任务、不重放创建请求。连接、profile、关闭、自检属于客户端使用体验。
-- `transport/`：`auth.py` 负责 socket HMAC；`rpyc.py` 负责连接和 TLS；`codec.py` 只做通用类型编解码；`messages.py` 负责协商、请求关联和执行结果判定。
-- `server/`：RPC 认证入口、固定操作路由、下载任务管理、健康报告和进程生命周期。
-- `adapters/interfaces.py`：类型化能力接口。`adapters/xtquant_2_0_6_1/` 独立拥有 SDK 签名探针、原始值转换、行情/资料/交易实现、连接重试及回调事件设施。
-- `cli/`：配置管理与公共操作调用；Windows 本机诊断可导出 SDK 接口面。
+| 模块 | 职责 |
+|---|---|
+| `contracts/` | 按业务组织冻结的请求与结果；操作注册、描述生成和边界校验 |
+| `client/` | `QmtClient` 能力入口、连接、自检与下载句柄 |
+| `transport/` | HMAC 认证、RPyC/TLS 连接、严格 JSON 编解码及消息关联 |
+| `server/` | 固定操作调度、下载任务、健康状态、配置与进程生命周期 |
+| `adapters/` | 部署 SDK 探针、来源转换、连接与类型化 Providers |
+| `storage/` | 查询驱动的业务持久缓存、覆盖证据及本地派生 |
+| `cli/` | 本机配置、管理、诊断与公共操作调用 |
 
-`contracts` 不依赖客户端、服务端、传输和第三方 SDK；客户端不依赖服务端或适配器。
-服务端调度只面向 Providers，具体 xtquant 装配位于启动入口。替代实现返回同样的模型，
-无需模拟 xtquant 的原始函数或字典。适配器内部可调用通用类型编解码器验证模型，不能依赖 RPyC 连接。
-`__init__.py` 仅负责导出，顶层 `QmtClient` 延迟加载，导入模型不会加载网络栈。
+`contracts` 不依赖传输、客户端、服务端或 SDK；客户端与传输不导入服务端及适配器。服务端通过 `adapters/interfaces.py` 的 Providers 访问业务能力，启动入口负责装配具体实现。适配器直接返回公共模型，可使用 codec 校验模型，不能依赖 RPyC 连接。`__init__.py` 只导出符号；模型导入不加载网络或 SDK。
+
+采用单一发行包和按业务组织的请求/结果模型，避免每个操作一个包及提前拆分多个发行包。SDK 的动态接口面只用于诊断，不投射为公共 API；这样替换来源时使用方仍依赖同一业务语义。
 
 ## 契约与协商
 
-当前契约标识为整数 `8`；它与包版本、socket 认证协议版本分别管理，不影响 Python 导入路径。
-操作表含 24 个操作，覆盖标的、合约、期权、行情、日历、分红、指数、五类核心财务表、
-三种下载、资产、持仓、委托、下单和两类撤单等业务能力。
+客户端认证后调用 `negotiate(contract_hash)`，服务端返回契约版本、指纹和各操作的 `Capability`。指纹涵盖模型字段、默认值、操作集合与行为修订；不匹配立即拒绝。SDK 可用性独立报告，签名不匹配只禁用依赖它的操作，探针不调用 SDK 或等待 Trader 登录。
 
-客户端认证后调用 `negotiate(contract_hash)`，服务端返回 `contract_version`、`contract_hash`
-及每个操作的 `Capability(available, adapter_id, reason)`。指纹涵盖模型字段、默认参数、
-操作集合和行为修订；不匹配立即拒绝，不猜测降级。SDK 可用性与契约协商分离，
-某个方法签名不匹配只禁用依赖它的操作。探针只读取定义，不等待 Trader 登录。
+稳定业务 RPC 为 `call(payload_json)`。请求携带 `contract_version`、`request_id`、`operation` 和 `payload`；响应保留关联字段，成功返回 `data`，失败返回 `OperationError`。客户端验证消息关联与返回模型。RPC 只传 JSON 字符串，禁用 pickle 和通用 public attribute 访问；当前不提供 HTTP 服务。
 
-之后唯一稳定业务 RPC 是 `call(payload_json)`。请求字段固定为：
-
-```json
-{"contract_version":3,"request_id":"unique-id","operation":"market.get_ticks","payload":{"codes":["510050.SH"]}}
-```
-
-成功响应携带相同的版本、请求 ID、操作名，以及 `status="ok"` 和 `data`；失败携带
-`status="error"` 和 `OperationError`。客户端严格检查关联字段、错误阶段及返回模型。
-RPC 只传 JSON 字符串，禁用 pickle 与通用 public attribute 访问。
-
-## 类型、时间、身份
-
-Python 模型使用冻结 dataclass；返回序列为 tuple，解码后的 Mapping 不可写。
-解码拒绝多余字段、缺失必需字段、无效联合判别、重复 JSON 键、bool 充当数字、非有限浮点。
-日期为 `date` / `YYYY-MM-DD`；时刻为 aware datetime / UTC 六位微秒 `...000000Z`。
-K 线及历史行情下载只支持日线，以交易日为边界；源时间另存 `source_time`，不混同 bar 标识。
-服务与 SDK 诊断入口不全局替换标准库 `datetime.datetime`，避免导入顺序导致模型和严格 codec
-持有不同类型。源端数值时间戳在适配器中以 epoch + timedelta 转换。
-CPython [3.10](https://github.com/python/cpython/blob/v3.10.0/Python/pytime.c#L127-L155) 和
-[3.11](https://github.com/python/cpython/blob/v3.11.9/Python/pytime.c#L260-L301) 已处理小数微秒进位；
-[bpo-44831](https://github.com/python/cpython/issues/88994) 是 now/fromtimestamp 的舍入差异，
-不能作为“3.12 才修复毫秒时间戳断言”的依据。若特定券商原生扩展仍崩溃，须以崩溃栈和
-复现样本定位，在对应版本适配器处理，不能推定 Python 模块替换会修复 C 扩展路径。
-
-日期边界包含两端。count 必须为正数，不能与 start 同时给出，None 表示范围内全部。
-当前 xtquant 适配器只接受整秒查询边界。未来交易日覆盖无法确认时明确拒绝。
-
-标识是不透明字符串，保留券商后缀、前导零和原始名称；不把 SHO/SZO 替换为 SH/SZ。
-委托编号与柜台合同编号分别建模，撤单二选一。具体 xtquant 实现需要正十进制委托编号，
-该要求不扩散到公共模型。查询金额和价格保留有限 float，不替应用四舍五入或转分。
-
-## 期权与字段归属
-
-`options.get_expiry_dates(underlying)` 与 `get_option_chain(underlying, expiry_date)`
-仅发现上海市场日期当天及以后的合约；必须实际验证归属和到期日，不直接相信 SDK 目录。
-`get_contract_details(codes)` 返回条款：标的、原名称、认购认沽、到期日、行权价和合约单位。
-发现所需字段少于详情所需字段；某个名称或单位缺失不能破坏可确定的到期日发现。
-期权原名称从证券资料补充，禁止自行拼接。历史合约目录查询不在券商承诺范围内。
-
-通用证券资料和占位日期在 Instrument；交易参考价在 TradingReference；盘口与观测时刻
-在 Tick。资料结算价和行情结算价是不同事实，不能互相填充。完整字段见[接口规格](../api/contract.md)。
-a-options 展示、计算、保存的条款、盘口、量价、昨收和日期均保留；IV、Greeks 和评分由应用计算。
+codec 拒绝多余字段、缺失必需字段、无效联合判别、重复 JSON 键、bool 充当数字和非有限浮点。日期、时间、身份、批量及字段约定统一见 [API 公共约定](../api/contract.md#公共约定)。来源标识与数值口径由适配器保留，不凭样本全局改写后缀、换算单位或替应用四舍五入。数值时间戳在适配器中转换，服务及诊断入口不全局替换标准库 `datetime`。
 
 ## 批量、错误与副作用
 
-代码批量上限 500，输入不重复，返回逐项对应并保持请求顺序。空批量不查询 SDK。
-Success 与 Failure 为判别联合；缺失、非法、非期权、源错误均不能伪装成零值。
-`require_all()` 在任一失败时抛 BatchIncompleteError。保留有界线程并发，不引入全局 SDK 串行锁。
+批量按请求顺序返回逐项结果，保留有界线程并发，不引入进程级 SDK 串行锁。两个适配器共用 `adapters/batch.py` 完成模型校验和逐项错误转换；原生调用与字段转换留在各适配器。连接及能力错误上抛，单条缺失或非法结果不会变成零值、空成功或破坏其他证券的结果。
 
-操作错误分别描述 error_type、phase、outcome、operation、contract_version、request_id。
-确定在执行前拒绝为 not_executed；读取失败为 not_applicable；有副作用请求的传输失败或
-无法验证的结果为 unknown。客户端不自动重试下单、撤单或下载创建；unknown 不能解释为拒绝。
-查询到的委托状态使用标准枚举，同时保留源状态码、错误文本和成交事实。
-
-下载创建返回 TaskRef，查询返回 DownloadStatus；pending/running/completed/failed 明确分离。
-完成只表示 SDK 正常结束，不保证数据完整、新鲜或覆盖请求区间。超时等待不取消任务，也不重提。
-未提供进度的来源返回 None，不生成假进度。任务不存在或已淘汰返回 TASK_NOT_FOUND。
+有副作用的请求在无法确定执行结果时报告 `unknown`，不能解释为拒绝，也不自动重试。下载句柄只查询任务，不重放创建请求；等待超时不取消或重提任务。任务标识不跨服务重启持久化，已淘汰任务报 `TASK_NOT_FOUND`，来源没有进度时返回 `None`。
 
 ## 启动、安全与验收
 
-RPC 与后台 QMT 连接独立启动；维护期间仍可协商和读取健康状态，交易请求明确拒绝。
-共享密钥持有者对该实例拥有完整信任；生产部署为内部受信任网络。HMAC 不加密，TLS 可选。
-签名与常量以实际部署 SDK 为依据，完整 discovery 仅作诊断。运行实例共享一个 Trader。
+RPC 先启动，QMT 首次连接及重连在后台执行，使券商维护或 Trader 连接失败不妨碍认证、协商和健康查询。没有选择“同步尝试后再降级”，因为原生连接阻塞仍会阻止 RPC 启动；也没有引入 SDK 子进程隔离，以控制接口转发、回调与资源管理成本。后台线程不能强制取消原生调用或隔离 SDK 崩溃。
 
-可移植验证使用合成 SDK、真实本地 RPyC、两个消费方全量测试及构建安装验证。
-Windows/QMT 验收必须单独执行；源码取证和 mock 通过不能替代它。
-首次连接立即尝试，失败后依次等待 10、30、60、600 秒，之后保持 600 秒；默认不限次数。
-恢复要求 Trader 连接成功且已配置账户时订阅成功，恢复后重置失败计数并继续心跳。
-SDK 导入失败、认证配置无效、端口占用是启动错误，不能当作维护故障忽略。
-`qmt-rpyc-server check` 使用同步 probe 验证实际连接，后台任务启动不等于连接成功。
+SDK 导入失败、认证配置无效和端口占用是启动错误。行情查询不以 Trader 状态统一门禁；历史数据仅在覆盖与时效满足时可离线读取，具体规则见[持久缓存设计](persistent-cache.md)。下载管理器没有独立行情连接检测，不能承诺断线自动终止所有排队任务。
 
-后台线程不能强制取消原生调用或隔离 SDK 进程崩溃。行情查询不以 Trader 状态统一门禁，
-桥接通过类型化 Provider 装饰器读取持久业务数据，仅复用已确认的范围与时效；来源证据限制详见[持久数据设计](persistent-cache.md)。SDK 本地有数据也不代表查询区间完整。
-下载管理器虽提供 fail_pending，但未接入独立行情连接状态检测，不能承诺断线自动终止所有排队任务。
-源数量、权重与财务字段保持源端口径，不凭样本全局换算单位。
+首次连接立即尝试，失败后依次等待 10、30、60、600 秒，此后保持 600 秒，默认不限次数。Trader 连接成功且已配置账户时订阅成功才算恢复，随后重置失败计数并继续心跳。`qmt-rpyc-server check` 同步验证实际连接，后台任务已启动不等于已连接。
 
-部署 SDK 的实际能力通过[调试入口](../api/debug.md)查询；RPC 无法启动时使用 Windows 本机
-`qmt-rpyc-server api dump` 导出，不把恢复旧 RPC 作为维护修复的前提。
-诊断结果按需导出到本地，不在仓库保存会过时的部署 JSON 清单或逐次验收日志。
+每个实例服务一个人的 QMT 和账户环境，所有客户端共享一个 Trader。共享认证密钥持有者对该实例拥有完整信任；部署面向受信任内网，不提供多租户授权。HMAC 不加密，TLS/mTLS 可选。服务端配置由 `server/config.py` 管理，环境变量覆盖所选配置文件；初始化与启动共用目录和默认配置规则，初始化默认写入 loopback 地址，未配置的直接启动仍默认监听所有地址。进程管理及升级见[本机软件升级](software-update.md)。
+
+可移植测试使用合成 SDK 和本地 RPyC，Windows/QMT 行为须在实际部署验证，mock 通过不能替代实机验收。SDK 能力可通过[调试入口](../api/debug.md)调查；RPC 无法启动时使用 `qmt-rpyc-server api dump` 本机导出，不以旧 RPC 恢复为维护修复前提。部署清单、账户信息及逐次验收日志不入仓库。
 
 ## 显式开启的 SDK 调试
 
-独立 `debug(payload_json)` RPC 仅在服务端 `QMT_RPYC_DEBUG=1` 时调用注入的 SDK 调试处理器，
-沿用认证，默认拒绝。它不进入操作注册表或业务契约指纹；使用独立 DebugClient，无需业务协商。
-参数直接转发给原始 SDK，返回 JSON 表示，不套用业务 DTO 或提供稳定结果类型。
-这是供实际部署取证使用的管理入口，不是应用业务依赖。详见[调试接口](../api/debug.md)。
+`debug(payload_json)` 沿用认证，仅在 `QMT_RPYC_DEBUG=1` 时启用。独立 `DebugClient` 无需业务协商，参数直接转发来源，结果为 JSON 表示，不套业务 DTO。它不进入公共操作表或契约指纹，不是应用的稳定依赖。发现到的接口不自动成为公共能力，原生回调也不能通过 JSON 调试入口传递。入口与限制见[调试接口](../api/debug.md)。
 
 ## SDK 适配版本选择
 
-默认适配标识为 `xtquant_2.0.6.1`，Python 包为 `adapters/xtquant_2_0_6_1/`。
-点号是 Python 模块路径分隔符，不能把带点号的版本目录直接当作普通包导入，
-所以配置保留版本点号，导入路径使用下划线。版本表示适配目标，不代表运行时已自动证明 SDK 完全兼容。
+`adapters/registry.py` 是适配选择的权威定义，当前注册 `xtquant_2.0.6.1` 和 `bigqmt`。启动、环境检查、SDK 导出与调试使用同一注册表，导入注册表不加载 SDK。每个适配器拥有自己的连接、探针、转换和能力，不能交叉装配。
 
-`adapters/registry.py` 显式注册可安装的适配实现。服务端启动、环境检查、SDK 导出、
-原始调试入口均通过同一个注册表选择；每个版本独立拥有连接管理、签名探针、
-转换和能力实现，不能把一个版本的连接管理与另一个版本的业务转换混用。
-导入注册表不导入 SDK，配置错误可以在 QMT 未连接时检查。
+配置通过 `QMT_RPYC_ADAPTER` 显式选择，未知标识拒绝启动，不按 SDK 字符串自动猜测，不运行中热切换。版本点号保留在适配标识中，Python 导入路径使用合法包名。适配目标不代表已经证明任意同版本券商 SDK 都兼容。
 
-在 Windows 的 `config.env` 中设置（默认可省略）：
+升级适配器须先从实际部署验证签名、常量和行为，再实现相同 Providers 并注册。部署匹配的 SDK、选择适配器并重启；回退同样须恢复匹配的 SDK 与选择。重启前应结束在途调用与下载。公共语义改变时须变更契约，不能用适配选择绕过协商。
 
-```dotenv
-QMT_RPYC_ADAPTER=xtquant_2.0.6.1
-```
+### BigQMT 策略桥的选择
 
-环境变量优先于配置文件。运行 `qmt-rpyc-server check` 后重启服务生效；启动摘要显示
-Adapter，`system.get_capabilities` 各操作的 `adapter_id` 报告实际适配标识。
-未知或未注册标识直接拒绝启动，不会静默回退，也不会自动切换 SDK。
-初始化向导会保留适配版本及 `QMT_RPYC_DEBUG` 设置。
+项目自维护完整 QMT 策略桥，参考原生调用映射，但不将第三方兼容客户端和顶层 xtquant 包作为运行依赖，以避免包冲突与额外兼容行为。BigQMT 只使用完整 QMT 的内置策略能力，不用外部 xtquant 补齐缺失操作；代价是需要独立验证能力缺口、策略部署与恢复行为。
 
-升级步骤：
+策略与外部服务通过 Windows 同机命名管道通信，远程仍使用 RPyC，避免额外中间件及策略环境网络依赖。管道实现需保证异步读写、取消清理、断线恢复和未知结果不重发。策略生成文件使用 GBK，兼容目标 Python 3.6；外部服务使用支持的 Windows Python 运行时。
 
-1. 在实际券商部署导出 SDK 签名/常量并验证数据；公开 SDK 版本号不足以证明行为兼容。
-2. 新增合法 Python 版本包，实现原有 Providers 模型与连接、调试、发现入口；注册新的标识。
-3. 跑契约、模拟及使用方测试，在对应 Windows SDK 上完成只读实机验收；交易写操作另行验收。
-4. 部署包含新旧实现的桥接包，单独安装/配置匹配的券商 SDK，修改 `QMT_RPYC_ADAPTER` 并重启。
-5. 若要回退，恢复匹配的 SDK 与旧适配选择并重启。不能只改名字来适配未验证的新 SDK。
-
-当前仅实现并注册 `xtquant_2.0.6.1`，没有第二个生产适配版本。切换机制通过独立测试实现验证。
-不按 SDK 字符串自动选择，不在运行中热切换：服务进程共享 Trader，进行中的调用及下载应在重启前结束；
-任务标识不跨重启持久化。适配版本和 SDK 升级不改变公共契约，前提是同样的字段与行为仍成立。
-若公共语义必须改变，则另行变更契约版本/行为修订，不能靠适配选择绕过指纹协商。
+BigQMT 的历史行情、财务及指数权重下载为兼容空实现：完整 QMT 自身负责数据获取，桥接仍创建独立任务并报告处理状态。`completed` 不表示发起了实际下载，不能用作刷新屏障或数据覆盖证据；capabilities 的 reason 与日志明确说明此差异。xtquant 继续调用真实下载入口。该来源差异不允许把缺失读取或交易执行伪装成空成功。

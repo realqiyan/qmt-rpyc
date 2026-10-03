@@ -3,9 +3,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-from qmt_rpyc.adapters.errors import ItemFailure, ProviderError
-from qmt_rpyc.contracts.common import BatchResult, Failure, ItemError, Success
-from qmt_rpyc.transport.codec import decode, encode
+from qmt_rpyc.adapters.batch import read_batch
+from qmt_rpyc.adapters.errors import ProviderError
 
 from . import conversions as v
 from .probe import SIGNATURES, probe
@@ -99,25 +98,8 @@ class SdkSource:
                                 'unknown' if mutation else 'not_applicable') from exc
 
     def batch(self, codes, model, getter):
-        def one(code):
-            try:
-                value = getter(code)
-                if value is None:
-                    raise ItemFailure('NOT_FOUND', 'source returned no object')
-                return Success(code, decode(model, encode(value)))
-            except ProviderError as exc:
-                if exc.category in ('NOT_CONNECTED', 'API_UNAVAILABLE'):
-                    raise
-                logger.warning('Per-item source failure', exc_info=True)
-                return Failure(code, ItemError('SOURCE_ERROR', 'source item failed'))
-            except (ValueError, KeyError, TypeError, OverflowError) as exc:
-                logger.warning('Per-item validation failure', exc_info=True)
-                return Failure(code, ItemError(exc.code if isinstance(exc, ItemFailure) else 'INVALID_RESULT',
-                                              str(exc) if isinstance(exc, ItemFailure) else 'source item does not satisfy the contract'))
-        if not codes:
-            return BatchResult(())
-        with ThreadPoolExecutor(max_workers=min(self.workers, len(codes))) as pool:
-            return BatchResult(tuple(pool.map(one, codes)))
+        return read_batch(codes, model, getter, self.workers, logger=logger,
+                          missing_message='source returned no object')
 
     def source_option(self, code):
         return self.call('get_option_detail_data', code)

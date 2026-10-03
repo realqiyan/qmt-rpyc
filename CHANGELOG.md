@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-03
+
+- Public contract and BigQMT bridge compatibility identifiers remain 9.
+
+- Consolidate server configuration defaults, file handling and authentication-key
+  checks without changing init or runtime behavior.
+- Share typed per-item batch conversion between adapters and remove the unused
+  BigQMT background underlying cache superseded by synchronous persistent reads.
+- Merge architecture decisions into the three topic design documents, remove
+  duplicate ADRs and obsolete migration prose, and correct stale contract references.
+
 - Isolate daily-bar batch items by security, including listing boundaries, source
   requests, errors and stored partitions.
 - Require an actual bar for every source session before reusing a historical

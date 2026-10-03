@@ -1,14 +1,13 @@
 """BigQMT boundary conversions; independent of any external native SDK."""
 import logging
 import math
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from typing import Mapping
 
-from qmt_rpyc.adapters.errors import ItemFailure, ProviderError
-from qmt_rpyc.contracts.common import BatchResult, Failure, ItemError, Success, validate_identity
+from qmt_rpyc.adapters.batch import read_batch
+from qmt_rpyc.adapters.errors import ProviderError
+from qmt_rpyc.contracts.common import validate_identity
 from qmt_rpyc.contracts.instruments import DatePlaceholder, KnownDate
-from qmt_rpyc.transport.codec import decode, encode
 
 SHANGHAI = timezone(timedelta(hours=8))
 UTC = timezone.utc
@@ -103,24 +102,5 @@ def read(method, *args):
 
 
 def batch(codes, model, getter, workers=8):
-    if type(workers) is not int or workers < 1:
-        raise ValueError('workers must be positive')
-    def one(code):
-        try:
-            value = getter(code)
-            if value is None:
-                raise ItemFailure('NOT_FOUND', 'source returned no record')
-            return Success(code, decode(model, encode(value)))
-        except ProviderError as exc:
-            if exc.category in ('NOT_CONNECTED', 'API_UNAVAILABLE'):
-                raise
-            logger.warning('BigQMT source item failed', exc_info=True)
-            return Failure(code, ItemError('SOURCE_ERROR', 'source item failed'))
-        except (TypeError, ValueError, KeyError, OverflowError) as exc:
-            logger.warning('BigQMT result item failed validation: code=%s model=%s', code, model.__name__, exc_info=True)
-            return Failure(code, ItemError(exc.code if isinstance(exc, ItemFailure) else 'INVALID_RESULT',
-                str(exc) if isinstance(exc, ItemFailure) else 'source item does not satisfy the contract'))
-    if not codes:
-        return BatchResult(())
-    with ThreadPoolExecutor(max_workers=min(workers, len(codes))) as pool:
-        return BatchResult(tuple(pool.map(one, codes)))
+    return read_batch(codes, model, getter, workers, logger=logger,
+                      missing_message='source returned no record')

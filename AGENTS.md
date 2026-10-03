@@ -65,6 +65,12 @@ Adapters return public models directly; native names and transformations remain 
 
 Keep bounded concurrent batch execution (500 distinct codes maximum, per-item errors, input order); do not introduce process-wide xtdata serialization. Non-idempotent requests never retry after an unknown outcome. Public callback/event delivery is outside the contract. See `docs/design/architecture.md` and `docs/api/contract.md`.
 
+Keep design decisions, their tradeoffs and current mechanisms together in one
+document per topic under `docs/design/`; do not maintain separate ADR files.
+README provides usage entry points, API docs describe caller-visible behavior,
+`CONTEXT.md` defines terms, and `CHANGELOG.md` retains release history. Link to
+authoritative definitions instead of repeating mutable versions or schemas.
+
 ## Runtime Constraints and Configuration
 
 - The deployed broker SDK requires 64-bit Python 3.10 or 3.11 on Windows.

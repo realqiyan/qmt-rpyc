@@ -4,12 +4,11 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Mapping, Optional, Protocol, Sequence, Tuple
 
 from qmt_rpyc.adapters.errors import ItemFailure, ProviderError
-from qmt_rpyc.contracts.common import BatchResult, CachedCodesRequest, CodesRequest, EmptyRequest, RefreshRequest
+from qmt_rpyc.contracts.common import BatchResult, CachedCodesRequest, CodesRequest, RefreshRequest
 from qmt_rpyc.contracts.instruments import Instrument, TradingReference
 from qmt_rpyc.contracts.options import ExpiryDatesRequest
 from . import conversions as v
 from .options import OptionsAdapter
-from .underlying_cache import UnderlyingCache
 
 
 class InstrumentReader(Protocol):
@@ -22,9 +21,8 @@ class InstrumentReader(Protocol):
 
 class InstrumentsAdapter:
     def __init__(self, reader: InstrumentReader, workers: int = 8,
-                 market_date: Callable[[], date] = v.market_date, options=None, underlying_cache=None):
+                 market_date: Callable[[], date] = v.market_date, options=None):
         self.reader, self.workers, self.market_date = reader, workers, market_date
-        self.underlying_cache = underlying_cache if underlying_cache is not None else UnderlyingCache()
         self.options = options if options is not None else OptionsAdapter(reader, workers, market_date)
 
     def list_option_underlyings(self, request: RefreshRequest) -> Tuple[str, ...]:
