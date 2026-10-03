@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-03
+
+- Public contract and BigQMT bridge compatibility identifiers remain 9.
+- Refresh both READMEs with adapter-specific prerequisites, strategy generation,
+  coordinated updates and current cache/diagnostic limitations.
+
+- Add `qmt-rpyc-server qmt generate --output PATH` to generate a standalone
+  GBK/Python 3.6 BigQMT bridge strategy from the installed package, using the
+  configured pipe name and requiring `--force` to overwrite existing files.
+
 ## [0.9.1] - 2026-10-03
 
 - Public contract and BigQMT bridge compatibility identifiers remain 9.

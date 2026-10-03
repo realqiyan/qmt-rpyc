@@ -81,7 +81,7 @@ SDK 执行后的异常、响应无法解析或连接中断均保守报告 `unkno
 
 ## BigQMT 调试
 
-BigQMT 同样支持 QMT_RPYC_DEBUG=1，需搭配私有协议 4 的策略。
+BigQMT 同样支持 QMT_RPYC_DEBUG=1，需搭配当前发行的策略，兼容规则见[版本规则](../versioning.md)。
 目标名称使用 context.get_full_tick、global.get_sector_list 等原生名称；
 只允许白名单中的只读方法，不开放交易、下载或任意代码执行。
 方法描述会返回 call_allowed，能描述的方法不一定允许调用。
