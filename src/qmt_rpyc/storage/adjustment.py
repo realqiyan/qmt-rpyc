@@ -18,12 +18,15 @@ class AdjustmentPolicy:
     Each mode was compared with the source's own output before being served locally.
     Front differs where a halt spans an ex-dividend date: the source answers such a
     window differently depending on where it starts, so no local formula matches both.
-    Gugai events stay on the source path. One policy serves every adapter, because
-    they read the same QMT data.
+    The query service checks front's session completeness before using this
+    formula; this additional check does not apply to front_ratio. Relevant
+    gugai events stay on the source path. One policy serves every
+    adapter, because they read the same QMT data.
     """
     VERIFIED_MODES = ('none', 'front', 'back', 'back_ratio', 'front_ratio')
 
     def supports(self, events, mode):
+        """Formula support for already selected relevant events; no coverage check."""
         return mode in self.VERIFIED_MODES and all(event.source_gugai == 0 for event in events)
 
     def derive(self, rows, events, mode):

@@ -62,11 +62,10 @@ def test_a_bar_for_every_source_session_proves_a_closed_window():
     assert coverage().assess('daily_bars', query, closed_bars(), START, END).reusable
 
 
-def test_a_session_without_a_bar_is_reusable_like_the_source_fills_it():
-    # 2026-09-28 is a source session with no bar. The source fills that session, and
-    # filling reproduces the row, so the window the source reported stays reusable.
+def test_a_session_without_a_bar_remains_unknown():
+    # Filling cannot distinguish a suspension from data that is not downloaded.
     query = DailyBarsQuery(('600000.SH',), START, date(2026, 9, 28), fill_data=False)
-    assert coverage().assess('daily_bars', query, closed_bars(), START, date(2026, 9, 28)).reusable
+    assert not coverage().assess('daily_bars', query, closed_bars(), START, date(2026, 9, 28)).reusable
 
 
 def test_a_bar_outside_the_source_calendar_never_proves_anything():

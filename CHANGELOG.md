@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+- Isolate daily-bar batch items by security, including listing boundaries, source
+  requests, errors and stored partitions.
+- Require an actual bar for every source session before reusing a historical
+  range; missing sessions remain observations and are queried again. Clear the
+  existing cache before using the new coverage rules.
+- Fix acquisition time for historical storage and omit the acquisition day from
+  daily bars and calendars, including cold, refresh and midnight-crossing reads.
+- Reuse cached raw bars for front adjustment with ordinary dividend and bonus
+  events when actual rows match every source session in the query window. Missing
+  sessions or unavailable calendar evidence keep the exact source query, avoiding
+  the observed window-dependent front exception. Unsafe as-of requests fail
+  without publishing partial dependency updates.
+- Preserve closed historical count-query cache reuse for front and front_ratio:
+  check event relevance after selecting the actual cached suffix, so older gugai
+  events outside that suffix do not force source reads or break offline access
+  while all required coverage and freshness checks remain satisfied.
+
 ## [0.9.0] - 2026-10-01
 
 - Release the validated 0.9.0rc4 runtime as stable on PyPI, with no runtime
