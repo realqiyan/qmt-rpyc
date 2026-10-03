@@ -258,3 +258,50 @@ def test_bigqmt_init_persists_adapter_without_wrapper(tmp_path, monkeypatch):
 def test_update_version_is_not_global_version_flag():
     parsed = cli.build_parser().parse_args(['update', '--version', '0.7.0'])
     assert parsed.target_version == '0.7.0'
+
+
+@pytest.mark.parametrize('origin', ['default', 'config', 'environment'])
+def test_qmt_generate_uses_configured_pipe_without_sdk(tmp_path, monkeypatch, capsys, origin):
+    from qmt_rpyc.adapters.bigqmt.winpipe import DEFAULT_PIPE
+    from qmt_rpyc.adapters.bigqmt.strategy import build
+    config = tmp_path / 'config.env'
+    monkeypatch.setattr(cli, 'server_dir', lambda: tmp_path)
+    monkeypatch.delenv('QMT_RPYC_BIGQMT_PIPE', raising=False)
+    monkeypatch.delenv('QMT_RPYC_AUTH_KEY', raising=False)
+    monkeypatch.setattr(cli, 'load_sdk', lambda *args: pytest.fail('SDK access'))
+    monkeypatch.setattr(cli, 'detect_environment', lambda: pytest.fail('environment probing'))
+    pipe = DEFAULT_PIPE
+    if origin != 'default':
+        config.write_text('QMT_RPYC_BIGQMT_PIPE=config_pipe\nQMT_RPYC_AUTH_KEY=synthetic-secret\n')
+        pipe = 'config_pipe'
+    if origin == 'environment':
+        monkeypatch.setenv('QMT_RPYC_BIGQMT_PIPE', 'environment_pipe')
+        pipe = 'environment_pipe'
+    output = tmp_path / 'nested' / 'strategy.py'
+    assert cli.main(['qmt', 'generate', '--output', str(output)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['pipe_name'] == pipe
+    assert output.read_bytes() == build(pipe).encode('gbk')
+    assert b'synthetic-secret' not in output.read_bytes()
+    if origin != 'default':
+        assert build(pipe) != build()
+
+
+def test_qmt_generate_explicit_config_and_overwrite_protection(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv('QMT_RPYC_BIGQMT_PIPE', raising=False)
+    config = tmp_path / 'custom.env'
+    config.write_text('QMT_RPYC_BIGQMT_PIPE=custom_pipe\n')
+    target = tmp_path / 'strategy.py'
+    target.write_bytes(b'original')
+    args = ['--config', str(config), 'qmt', 'generate', '--output', str(target)]
+    assert cli.main(args) == 1
+    assert json.loads(capsys.readouterr().err)['error_type'] == 'FileExistsError'
+    assert target.read_bytes() == b'original'
+    assert cli.main(args + ['--force']) == 0
+    assert json.loads(capsys.readouterr().out)['pipe_name'] == 'custom_pipe'
+    assert b"PIPE_NAME = 'custom_pipe'" in target.read_bytes()
+    original = target.read_bytes()
+    monkeypatch.setenv('QMT_RPYC_BIGQMT_PIPE', '../invalid')
+    assert cli.main(args + ['--force']) == 1
+    assert target.read_bytes() == original
+    assert 'invalid local pipe name' in capsys.readouterr().err

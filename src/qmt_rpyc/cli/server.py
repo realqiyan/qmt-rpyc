@@ -19,6 +19,7 @@ from qmt_rpyc.cli.common import (
 )
 from qmt_rpyc.server.config import (
     default_server_dir as server_dir,
+    env_defaults,
     read_env as _read_env,
     valid_auth_key,
     write_env as _write_env,
@@ -551,6 +552,22 @@ def _cmd_api_dump(args):
     _emit({"status": "ok", "output": str(output)}, args.compact)
 
 
+def _cmd_qmt_generate(args):
+    from qmt_rpyc.adapters.bigqmt.strategy import build
+    values = _read_env(config_path(args.config))
+    key = "QMT_RPYC_BIGQMT_PIPE"
+    pipe_name = os.environ.get(key, values.get(key, env_defaults()[key]))
+    output = Path(args.output).expanduser()
+    if output.exists() and not args.force:
+        raise FileExistsError("{} already exists; pass --force".format(output))
+    data = build(pipe_name).encode("gbk")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    # Exclusive creation also prevents overwriting a file created concurrently.
+    with output.open("wb" if args.force else "xb") as stream:
+        stream.write(data)
+    _emit({"status": "ok", "output": str(output), "pipe_name": pipe_name}, args.compact)
+
+
 def build_parser():
     parser = ArgumentParser(
         prog="qmt-rpyc-server",
@@ -786,6 +803,20 @@ For console debugging: qmt-rpyc-server start --foreground""",
         help="site-packages directory containing xtquant; otherwise detect it",
     )
     xtquant.set_defaults(func=_cmd_xtquant)
+
+    qmt = sub.add_parser(
+        "qmt", help="generate artifacts for full QMT",
+        description="Generate the standalone BigQMT bridge strategy without SDK or RPC access.",
+    )
+    qmt_sub = qmt.add_subparsers(dest="qmt_command", required=True, metavar="COMMAND")
+    generate = qmt_sub.add_parser(
+        "generate", help="write the BigQMT bridge strategy",
+        description="Write a GBK-encoded Python 3.6 strategy using the configured local pipe name.",
+        epilog="Example: qmt-rpyc-server qmt generate --output bigqmt_strategy.py",
+    )
+    generate.add_argument("--output", required=True, help="output strategy path; creates parent directories")
+    generate.add_argument("--force", action="store_true", help="overwrite an existing output file")
+    generate.set_defaults(func=_cmd_qmt_generate)
 
     api = sub.add_parser(
         "api",
